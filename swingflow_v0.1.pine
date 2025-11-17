@@ -246,16 +246,9 @@ plot(strategy.position_size > 0 ? takeProfit : na,
 
 // Add price labels for active positions
 if strategy.position_size > 0 and barstate.islast
-    entryPriceLabel = label.new(bar_index, entryPrice, 
-                                 text="Entry: " + str.tostring(entryPrice, "#.##"),
-                                 style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
-    stopLabel = label.new(bar_index, useTrailingStop ? trailStop : stopLoss,
-                          text="Stop: " + str.tostring(useTrailingStop ? trailStop : stopLoss, "#.##"),
-                          style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
-    targetLabel = label.new(bar_index, takeProfit,
-                            text="Target: " + str.tostring(takeProfit, "#.##"),
-                            style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
-
+    entryPriceLabel = label.new(bar_index, entryPrice, text="Entry: " + str.tostring(entryPrice, "#.##"), style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
+    stopLabel       = label.new(bar_index, useTrailingStop ? trailStop : stopLoss, text="Stop: " + str.tostring(useTrailingStop ? trailStop : stopLoss, "#.##"), style=label.style_label_left, color=color.red,  textcolor=color.white, size=size.normal)
+    targetLabel     = label.new(bar_index, takeProfit, text="Target: " + str.tostring(takeProfit, "#.##"), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
 // ============================================================================
 // ALERTS
 // ============================================================================
