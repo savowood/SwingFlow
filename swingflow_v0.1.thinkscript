@@ -1,0 +1,270 @@
+# ============================================================================
+# SWINGFLOW v0.1 - THINKSCRIPT VERSION
+# Advanced Pullback Trading Strategy for Thinkorswim
+# 
+# Support the developer: https://buymeacoffee.com/savowood
+# ============================================================================
+
+# Strategy Overview:
+# - Multi-style pullback trading (Intraday, Swing, Medium, Long-term)
+# - EMA Stack confirmation (9/20/180)
+# - VWAP pullback detection
+# - MACD momentum confirmation
+# - Optional RSI, Stochastic, Bollinger Bands filters
+# - ATR-based risk management
+# - Visual signals and alerts
+
+# ============================================================================
+# INPUT PARAMETERS
+# ============================================================================
+
+# Trading Style
+input tradingStyle = {default "Intraday", "Swing", "Medium-Term", "Long-Term"};
+
+# EMA Settings
+input ema9Length = 9;
+input ema20Length = 20;
+input ema180Length = 180;
+input useEmaFilter = yes;
+
+# VWAP Settings
+input useVwap = yes;
+input vwapPullbackType = {default "Touch", "Cross Below Then Above", "Within Range"};
+input vwapRangePercent = 0.5;
+
+# MACD Settings
+input macdFastLength = 12;
+input macdSlowLength = 26;
+input macdSignalLength = 9;
+input useMacdConfirmation = yes;
+
+# RSI Settings
+input useRsi = no;
+input rsiLength = 14;
+input rsiOversold = 30;
+input rsiOverbought = 70;
+
+# Stochastic Settings
+input useStochastic = no;
+input stochLength = 14;
+input stochSmooth = 3;
+input stochOversold = 20;
+
+# Bollinger Bands Settings
+input useBollinger = no;
+input bbLength = 20;
+input bbStdDev = 2.0;
+
+# Volume Settings
+input useVolumeFilter = yes;
+input volumeMultiplier = 1.2;
+input volumeAvgLength = 20;
+
+# Risk Management
+input riskRewardRatio = 3.0;
+input stopLossType = {default "ATR-Based", "Percentage", "Recent Low"};
+input stopLossPercent = 2.0;
+input atrLength = 14;
+input atrMultiplier = 1.5;
+
+# Display Settings
+input showEmas = yes;
+input showVwap = yes;
+input showBollingerBands = no;
+input showSignalArrows = yes;
+input showPriceLabels = yes;
+
+# ============================================================================
+# INDICATOR CALCULATIONS
+# ============================================================================
+
+# EMAs
+def ema9 = ExpAverage(close, ema9Length);
+def ema20 = ExpAverage(close, ema20Length);
+def ema180 = ExpAverage(close, ema180Length);
+
+# VWAP
+def vwapValue = reference VWAP();
+
+# MACD
+def macdLine = ExpAverage(close, macdFastLength) - ExpAverage(close, macdSlowLength);
+def signalLine = ExpAverage(macdLine, macdSignalLength);
+def macdHist = macdLine - signalLine;
+
+# ATR
+def atr = WildersAverage(TrueRange(high, close, low), atrLength);
+
+# RSI
+def rsi = RSI(length = rsiLength);
+
+# Stochastic
+def stochK = StochasticFull(stochLength, stochSmooth, 3, 3).FullK;
+
+# Bollinger Bands
+def bbBasis = SimpleMovingAvg(close, bbLength);
+def bbDev = bbStdDev * StDev(close, bbLength);
+def bbUpper = bbBasis + bbDev;
+def bbLower = bbBasis - bbDev;
+
+# Volume
+def avgVolume = SimpleMovingAvg(volume, volumeAvgLength);
+
+# Lookback period based on trading style
+def lookbackBars = if tradingStyle == tradingStyle."Intraday" then 5
+                   else if tradingStyle == tradingStyle."Swing" then 10
+                   else if tradingStyle == tradingStyle."Medium-Term" then 15
+                   else 20;
+
+# ============================================================================
+# TRADING LOGIC
+# ============================================================================
+
+# EMA Stack Filter
+def emaStackBullish = ema9 > ema20 and ema20 > ema180 and close > ema9;
+def emaFilter = if useEmaFilter then emaStackBullish else yes;
+
+# VWAP Pullback Conditions
+def vwapPullbackTouch = low <= vwapValue and close > vwapValue;
+def vwapPullbackCross = close > vwapValue and close[1] <= vwapValue[1] and low[1] < vwapValue[1];
+def vwapPullbackRange = close > vwapValue * (1 - vwapRangePercent/100) and close < vwapValue * (1 + vwapRangePercent/100);
+
+def vwapCondition = if !useVwap then yes
+                    else if vwapPullbackType == vwapPullbackType."Touch" then vwapPullbackTouch
+                    else if vwapPullbackType == vwapPullbackType."Cross Below Then Above" then vwapPullbackCross
+                    else vwapPullbackRange;
+
+# MACD Confirmation
+def macdBullish = macdLine > signalLine and macdHist > 0;
+def macdCondition = if useMacdConfirmation then macdBullish else yes;
+
+# RSI Condition
+def rsiCondition = if useRsi then (rsi > rsiOversold and rsi < rsiOverbought) else yes;
+
+# Stochastic Condition
+def stochCondition = if useStochastic then (stochK > stochOversold and stochK < 80) else yes;
+
+# Bollinger Bands Condition
+def bbBounce = low <= bbLower and close > bbLower;
+def bbCondition = if useBollinger then bbBounce else yes;
+
+# Volume Condition
+def volumeCondition = if useVolumeFilter then volume > avgVolume * volumeMultiplier else yes;
+
+# Price Action - Bullish Patterns
+def isBullishEngulfing = close > open and close[1] < open[1] and close > open[1] and open < close[1];
+def isHammer = (high - low) > 3 * (close - open) and (close - low) / (0.001 + high - low) > 0.6 and (open - low) / (0.001 + high - low) > 0.6;
+def isBullishCandle = close > open and (close - open) > (high - low) * 0.6;
+def priceActionBullish = isBullishEngulfing or isHammer or isBullishCandle;
+
+# Pullback Detection
+def recentHigh = Highest(high, lookbackBars);
+def isPullback = high < recentHigh and close > open;
+
+# Long Entry Signal
+def longCondition = isPullback and emaFilter and vwapCondition and macdCondition and rsiCondition and stochCondition and bbCondition and volumeCondition and priceActionBullish;
+
+# ============================================================================
+# RISK MANAGEMENT CALCULATIONS
+# ============================================================================
+
+# Stop Loss Calculation
+def recentLow = Lowest(low, lookbackBars);
+def stopLoss = if stopLossType == stopLossType."ATR-Based" then close - (atr * atrMultiplier)
+               else if stopLossType == stopLossType."Percentage" then close * (1 - stopLossPercent/100)
+               else recentLow * 0.995;
+
+# Take Profit Calculation
+def riskAmount = close - stopLoss;
+def takeProfit = close + (riskAmount * riskRewardRatio);
+
+# ============================================================================
+# PLOTTING
+# ============================================================================
+
+# Plot EMAs
+plot EMA9 = if showEmas then ema9 else Double.NaN;
+EMA9.SetDefaultColor(Color.BLUE);
+EMA9.SetLineWeight(2);
+
+plot EMA20 = if showEmas then ema20 else Double.NaN;
+EMA20.SetDefaultColor(Color.ORANGE);
+EMA20.SetLineWeight(2);
+
+plot EMA180 = if showEmas then ema180 else Double.NaN;
+EMA180.SetDefaultColor(Color.RED);
+EMA180.SetLineWeight(2);
+
+# Plot VWAP
+plot VWAP = if showVwap then vwapValue else Double.NaN;
+VWAP.SetDefaultColor(Color.MAGENTA);
+VWAP.SetLineWeight(2);
+VWAP.SetStyle(Curve.FIRM);
+
+# Plot Bollinger Bands
+plot BBUpper = if showBollingerBands then bbUpper else Double.NaN;
+BBUpper.SetDefaultColor(Color.GRAY);
+BBUpper.SetStyle(Curve.SHORT_DASH);
+
+plot BBLower = if showBollingerBands then bbLower else Double.NaN;
+BBLower.SetDefaultColor(Color.GRAY);
+BBLower.SetStyle(Curve.SHORT_DASH);
+
+plot BBBasis = if showBollingerBands then bbBasis else Double.NaN;
+BBBasis.SetDefaultColor(Color.GRAY);
+BBBasis.SetStyle(Curve.SHORT_DASH);
+
+# Plot Entry Signals
+plot BuySignal = if showSignalArrows and longCondition then low * 0.998 else Double.NaN;
+BuySignal.SetPaintingStrategy(PaintingStrategy.BOOLEAN_ARROW_UP);
+BuySignal.SetDefaultColor(Color.GREEN);
+BuySignal.SetLineWeight(3);
+
+# Add price labels for stop loss and take profit when signal appears
+AddLabel(yes, "EMA Stack: " + if emaStackBullish then "Bullish ✓" else "Bearish ✗", 
+         if emaStackBullish then Color.GREEN else Color.RED);
+
+AddLabel(yes, "VWAP: " + if vwapCondition then "Active ✓" else "Waiting", 
+         if vwapCondition then Color.GREEN else Color.ORANGE);
+
+AddLabel(yes, "MACD: " + if macdBullish then "Bullish ✓" else "Bearish ✗", 
+         if macdBullish then Color.GREEN else Color.RED);
+
+AddLabel(useRsi, "RSI: " + Round(rsi, 1), 
+         if rsi > rsiOverbought then Color.RED 
+         else if rsi < rsiOversold then Color.BLUE 
+         else Color.GRAY);
+
+AddLabel(yes, "Volume: " + if volumeCondition then "Strong ✓" else "Weak", 
+         if volumeCondition then Color.GREEN else Color.ORANGE);
+
+AddLabel(yes, "R:R = " + riskRewardRatio + ":1", Color.YELLOW);
+
+# ============================================================================
+# ALERTS
+# ============================================================================
+
+Alert(longCondition, "SwingFlow: LONG Entry Signal!", Alert.BAR, Sound.Ding);
+
+# ============================================================================
+# BACKGROUND COLORING (Optional - shows trend strength)
+# ============================================================================
+
+# Light green background when all conditions align
+AddCloud(if longCondition then high else Double.NaN, 
+         if longCondition then low else Double.NaN, 
+         Color.LIGHT_GREEN, Color.LIGHT_GREEN);
+
+# ============================================================================
+# ADDITIONAL NOTES FOR USERS
+# ============================================================================
+
+# HOW TO USE:
+# 1. Add this study to your chart
+# 2. Configure inputs based on your trading style
+# 3. Watch for green arrow signals (BUY)
+# 4. Check labels at top for confirmation
+# 5. Enter trade when arrow appears
+# 6. Set stop loss and take profit based on risk management
+#
+# For more information, see the SWINGFLOW_README.md
+# Support: https://buymeacoffee.com/savowood
