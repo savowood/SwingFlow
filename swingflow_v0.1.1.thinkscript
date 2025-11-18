@@ -1,5 +1,5 @@
 # ============================================================================
-# SWINGFLOW v0.1 - THINKSCRIPT VERSION (UPDATED)
+# SWINGFLOW v0.1.1 - THINKSCRIPT VERSION
 # Advanced Pullback Trading Strategy for Thinkorswim
 # 
 # Support the developer: https://buymeacoffee.com/savowood
@@ -14,6 +14,14 @@
 # - Optional RSI, Stochastic, Bollinger Bands filters
 # - ATR-based risk management
 # - Visual signals and alerts
+
+# Version: 0.1.1
+# Release Date: November 17, 2025
+# Changes from v0.1:
+# - Fixed entry/stop/target label display
+# - Added Fair Value Gap detection (green=bullish, red=bearish)
+# - Added VWAP Standard Deviation bands (1σ & 2σ)
+# - Enhanced alerts and top bar labels
 
 # ============================================================================
 # INPUT PARAMETERS
@@ -33,12 +41,12 @@ input useVwap = yes;
 input vwapPullbackType = {default "Touch", "Cross Below Then Above", "Within Range"};
 input vwapRangePercent = 0.5;
 
-# VWAP Standard Deviation Bands (NEW)
+# VWAP Standard Deviation Bands (NEW in v0.1.1)
 input showVwapStdDev = yes;
 input vwapStdDev1 = 1.0;
 input vwapStdDev2 = 2.0;
 
-# Fair Value Gap Settings (NEW)
+# Fair Value Gap Settings (NEW in v0.1.1)
 input showFairValueGaps = yes;
 input fvgMinSize = 0.1; # Minimum gap size as percentage
 
@@ -96,7 +104,7 @@ def ema180 = ExpAverage(close, ema180Length);
 # VWAP
 def vwapValue = reference VWAP();
 
-# VWAP Standard Deviation Calculations (NEW)
+# VWAP Standard Deviation Calculations (NEW in v0.1.1)
 def vwapVariance = reference VWAP("num dev up or down" = 1.0).UpperBand - vwapValue;
 def vwapStdDevValue = vwapVariance;
 
@@ -105,7 +113,7 @@ def vwapLower1 = vwapValue - (vwapStdDevValue * vwapStdDev1);
 def vwapUpper2 = vwapValue + (vwapStdDevValue * vwapStdDev2);
 def vwapLower2 = vwapValue - (vwapStdDevValue * vwapStdDev2);
 
-# Fair Value Gap Detection (NEW)
+# Fair Value Gap Detection (NEW in v0.1.1)
 # Bullish FVG: Gap between high[2] and low (current low is above previous high by 2 bars)
 def bullishFVG = low > high[2] and (low - high[2]) / close > fvgMinSize / 100;
 def bullishFVGTop = if bullishFVG then low else Double.NaN;
@@ -230,7 +238,7 @@ VWAP.SetDefaultColor(Color.MAGENTA);
 VWAP.SetLineWeight(2);
 VWAP.SetStyle(Curve.FIRM);
 
-# Plot VWAP Standard Deviation Bands (NEW)
+# Plot VWAP Standard Deviation Bands (NEW in v0.1.1)
 plot VWAPUpper1 = if showVwap and showVwapStdDev then vwapUpper1 else Double.NaN;
 VWAPUpper1.SetDefaultColor(Color.LIGHT_GRAY);
 VWAPUpper1.SetStyle(Curve.SHORT_DASH);
@@ -270,7 +278,7 @@ BuySignal.SetPaintingStrategy(PaintingStrategy.BOOLEAN_ARROW_UP);
 BuySignal.SetDefaultColor(Color.GREEN);
 BuySignal.SetLineWeight(3);
 
-# Plot Fair Value Gaps (NEW)
+# Plot Fair Value Gaps (NEW in v0.1.1)
 # Bullish FVG - Green shading
 AddCloud(if showFairValueGaps then bullishFVGTop else Double.NaN, 
          if showFairValueGaps then bullishFVGBottom else Double.NaN, 
@@ -285,9 +293,7 @@ AddCloud(if showFairValueGaps then bearishFVGTop else Double.NaN,
 AddCloud(VWAPUpper1, VWAP, Color.LIGHT_GRAY, Color.LIGHT_GRAY);
 AddCloud(VWAP, VWAPLower1, Color.LIGHT_GRAY, Color.LIGHT_GRAY);
 
-# Add price labels for active positions (FIXED)
-# Note: In ThinkScript, we can't track position state like Pine Script's strategy.position_size
-# So we'll show the calculated levels when a signal appears
+# Add price labels for active positions (FIXED in v0.1.1)
 AddChartBubble(showPriceLabels and longCondition, low, 
                "Entry: " + AsText(close) + "\n" +
                "Stop: " + AsText(stopLoss) + "\n" + 
@@ -340,36 +346,38 @@ AddCloud(if longCondition then high else Double.NaN,
          Color.LIGHT_GREEN, Color.LIGHT_GREEN);
 
 # ============================================================================
-# ADDITIONAL NOTES FOR USERS
+# VERSION NOTES
 # ============================================================================
 
-# UPDATES IN THIS VERSION:
-# 1. Fixed label section to properly display entry, stop, and target prices
-# 2. Added Fair Value Gap detection with visual shading (green=bullish, red=bearish)
-# 3. Added VWAP Standard Deviation bands (1σ and 2σ) with customizable values
-# 4. Added FVG alert in top labels
-# 5. All new features enabled by default but can be toggled off
+# SwingFlow v0.1.1 - Release Notes
+# 
+# NEW FEATURES:
+# 1. Fair Value Gap Detection
+#    - Bullish FVG (green shading): Price gaps up, potential support
+#    - Bearish FVG (red shading): Price gaps down, potential resistance
+#    - Adjustable minimum gap size
+#    - Automatic alerts when gaps form
 #
-# FAIR VALUE GAPS:
-# - Bullish FVG: Gap where current low > high from 2 bars ago (buy opportunity)
-# - Bearish FVG: Gap where current high < low from 2 bars ago (sell signal)
-# - Green shading = Bullish FVG (potential support)
-# - Red shading = Bearish FVG (potential resistance)
+# 2. VWAP Standard Deviation Bands
+#    - 1σ bands (light gray): Normal volatility range
+#    - 2σ bands (dark gray): Extreme zones
+#    - Customizable multipliers
+#    - Visual cloud shading
 #
-# VWAP STANDARD DEVIATION BANDS:
-# - 1st StdDev (default: 1.0σ) = Light gray dashed lines
-# - 2nd StdDev (default: 2.0σ) = Dark gray dashed lines
-# - Acts like Bollinger Bands for VWAP, showing volatility
-# - Price at 2σ bands often indicates extreme moves
+# 3. Enhanced Price Labels
+#    - Fixed display issue from v0.1
+#    - Shows Entry, Stop, and Target prices
+#    - Green bubble at signal bars
 #
-# HOW TO USE:
-# 1. Add this study to your chart
-# 2. Configure inputs based on your trading style
-# 3. Watch for green arrow signals (BUY)
-# 4. Fair Value Gaps show where price might return to fill the gap
-# 5. VWAP bands help identify overbought/oversold relative to VWAP
-# 6. Check labels at top for confirmation
-# 7. Enter trade when arrow appears with proper confirmation
+# USAGE:
+# - All new features enabled by default
+# - Toggle on/off via input parameters
+# - See documentation for trading strategies
 #
-# For more information, see the SWINGFLOW_README.md
-# Support: https://buymeacoffee.com/savowood
+# SUPPORT:
+# https://buymeacoffee.com/savowood
+#
+# For full documentation, see:
+# - SWINGFLOW_README.md
+# - THINKORSWIM_GUIDE.md
+# - CHANGELOG.md

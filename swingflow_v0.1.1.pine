@@ -1,13 +1,13 @@
 //@version=5
 // ============================================================================
-// SWINGFLOW v0.1
+// SWINGFLOW v0.1.1
 // Advanced Pullback Trading Strategy
 // 
 // Support the developer: https://buymeacoffee.com/savowood
 // ============================================================================
 
-strategy("SwingFlow v0.1", 
-         shorttitle="SwingFlow v0.1", 
+strategy("SwingFlow v0.1.1", 
+         shorttitle="SwingFlow v0.1.1", 
          overlay=true, 
          initial_capital=100000,
          default_qty_type=strategy.percent_of_equity,
@@ -15,6 +15,16 @@ strategy("SwingFlow v0.1",
          commission_type=strategy.commission.percent,
          commission_value=0.1,
          slippage=2)
+
+// ============================================================================
+// VERSION NOTES
+// ============================================================================
+// Version 0.1.1 - November 17, 2025
+// New Features:
+// - Fair Value Gap detection (green=bullish, red=bearish)
+// - VWAP Standard Deviation bands (1σ and 2σ)
+// - Enhanced label display for Entry/Stop/Target
+// - Additional alerts for FVG detection
 
 // ============================================================================
 // INPUT PARAMETERS
@@ -33,13 +43,15 @@ useEmaFilter = input.bool(true, "Require Price Above 9/20/180 EMA Stack", group=
 useVwap = input.bool(true, "Use VWAP", group="VWAP")
 vwapPullbackType = input.string("Touch", "VWAP Pullback Type", options=["Touch", "Cross Below Then Above", "Within Range"], group="VWAP")
 vwapRangePercent = input.float(0.3, "VWAP Range % (for Within Range)", minval=0.1, maxval=5, step=0.1, group="VWAP")
-showVwapStdDev = input.bool(true, "Show VWAP Standard Deviation Bands", group="VWAP")
-vwapStdDev1 = input.float(1.0, "VWAP 1st StdDev Multiplier", minval=0.1, maxval=5, step=0.1, group="VWAP")
-vwapStdDev2 = input.float(2.0, "VWAP 2nd StdDev Multiplier", minval=0.1, maxval=5, step=0.1, group="VWAP")
 
-// Fair Value Gap (FVG) Settings
-showFVG = input.bool(true, "Show Fair Value Gaps", group="Fair Value Gaps")
-fvgExtend = input.int(10, "FVG Extension Bars", minval=1, maxval=100, group="Fair Value Gaps")
+// VWAP Standard Deviation Bands (NEW in v0.1.1)
+showVwapStdDev = input.bool(true, "Show VWAP Standard Deviation Bands", group="VWAP")
+vwapStdDev1 = input.float(1.0, "VWAP StdDev 1 Multiplier", minval=0.1, maxval=5, step=0.1, group="VWAP")
+vwapStdDev2 = input.float(2.0, "VWAP StdDev 2 Multiplier", minval=0.1, maxval=5, step=0.1, group="VWAP")
+
+// Fair Value Gap Settings (NEW in v0.1.1)
+showFairValueGaps = input.bool(true, "Show Fair Value Gaps", group="Fair Value Gaps")
+fvgMinSize = input.float(0.1, "FVG Minimum Size (%)", minval=0.01, maxval=5, step=0.01, group="Fair Value Gaps")
 
 // MACD Settings
 macdFast = input.int(12, "MACD Fast Length", minval=1, group="MACD")
@@ -93,12 +105,23 @@ ema180 = ta.ema(close, ema180Length)
 // VWAP
 vwapValue = ta.vwap(close)
 
-// VWAP Standard Deviation Bands
-vwapStdDevValue = ta.stdev(close - vwapValue, 20)
-vwapUpper1 = vwapValue + (vwapStdDevValue * vwapStdDev1)
-vwapLower1 = vwapValue - (vwapStdDevValue * vwapStdDev1)
-vwapUpper2 = vwapValue + (vwapStdDevValue * vwapStdDev2)
-vwapLower2 = vwapValue - (vwapStdDevValue * vwapStdDev2)
+// VWAP Standard Deviation Calculation (NEW in v0.1.1)
+vwapDev = ta.stdev(close - vwapValue, 20)
+vwapUpper1 = vwapValue + (vwapDev * vwapStdDev1)
+vwapLower1 = vwapValue - (vwapDev * vwapStdDev1)
+vwapUpper2 = vwapValue + (vwapDev * vwapStdDev2)
+vwapLower2 = vwapValue - (vwapDev * vwapStdDev2)
+
+// Fair Value Gap Detection (NEW in v0.1.1)
+// Bullish FVG: Gap between high[2] and low (current low is above previous high by 2 bars)
+bullishFVG = low > high[2] and (low - high[2]) / close > fvgMinSize / 100
+bullishFVGTop = bullishFVG ? low : na
+bullishFVGBottom = bullishFVG ? high[2] : na
+
+// Bearish FVG: Gap between low[2] and high (current high is below previous low by 2 bars)
+bearishFVG = high < low[2] and (low[2] - high) / close > fvgMinSize / 100
+bearishFVGTop = bearishFVG ? low[2] : na
+bearishFVGBottom = bearishFVG ? high : na
 
 // MACD
 [macdLine, signalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
@@ -121,39 +144,6 @@ bbLower = bbBasis - bbDev
 
 // Volume
 avgVolume = ta.sma(volume, volumeAvgLength)
-
-// ============================================================================
-// FAIR VALUE GAP (FVG) DETECTION
-// ============================================================================
-
-// Bullish FVG: Gap between current low and 2 bars ago high (current bar > previous bar)
-// Gap exists when: low[0] > high[2]
-bullishFVG = low > high[2] and close > open
-
-// Bearish FVG: Gap between current high and 2 bars ago low (current bar < previous bar)  
-// Gap exists when: high[0] < low[2]
-bearishFVG = high < low[2] and close < open
-
-// Store FVG levels
-var box[] bullishFVGBoxes = array.new_box()
-var box[] bearishFVGBoxes = array.new_box()
-
-// Create boxes for new FVGs
-if showFVG and bullishFVG
-    fvgBox = box.new(bar_index - 2, high[2], bar_index + fvgExtend, low, 
-                     border_color=color.new(color.green, 80), 
-                     bgcolor=color.new(color.green, 90),
-                     border_width=1,
-                     extend=extend.none)
-    array.push(bullishFVGBoxes, fvgBox)
-
-if showFVG and bearishFVG
-    fvgBox = box.new(bar_index - 2, low[2], bar_index + fvgExtend, high,
-                     border_color=color.new(color.red, 80),
-                     bgcolor=color.new(color.red, 90),
-                     border_width=1,
-                     extend=extend.none)
-    array.push(bearishFVGBoxes, fvgBox)
 
 // Price Action - Bullish Candle Patterns
 isBullishEngulfing = close > open and close[1] < open[1] and close > open[1] and open < close[1]
@@ -269,15 +259,34 @@ plot(ema180, "EMA 180", color=color.new(color.red, 0), linewidth=2)
 // Plot VWAP
 plot(useVwap ? vwapValue : na, "VWAP", color=color.new(color.purple, 0), linewidth=2, style=plot.style_circles)
 
-// Plot VWAP Standard Deviation Bands
-plot(showVwapStdDev and useVwap ? vwapUpper1 : na, "VWAP +1 StdDev", 
-     color=color.new(color.purple, 60), linewidth=1, style=plot.style_line)
-plot(showVwapStdDev and useVwap ? vwapLower1 : na, "VWAP -1 StdDev", 
-     color=color.new(color.purple, 60), linewidth=1, style=plot.style_line)
-plot(showVwapStdDev and useVwap ? vwapUpper2 : na, "VWAP +2 StdDev", 
-     color=color.new(color.purple, 70), linewidth=1, style=plot.style_line)
-plot(showVwapStdDev and useVwap ? vwapLower2 : na, "VWAP -2 StdDev", 
-     color=color.new(color.purple, 70), linewidth=1, style=plot.style_line)
+// Plot VWAP Standard Deviation Bands (NEW in v0.1.1)
+plot(showVwapStdDev ? vwapUpper1 : na, "VWAP Upper 1σ", color=color.new(color.gray, 50), linewidth=1, style=plot.style_line)
+plot(showVwapStdDev ? vwapLower1 : na, "VWAP Lower 1σ", color=color.new(color.gray, 50), linewidth=1, style=plot.style_line)
+plot(showVwapStdDev ? vwapUpper2 : na, "VWAP Upper 2σ", color=color.new(color.gray, 30), linewidth=1, style=plot.style_line)
+plot(showVwapStdDev ? vwapLower2 : na, "VWAP Lower 2σ", color=color.new(color.gray, 30), linewidth=1, style=plot.style_line)
+
+// Fill VWAP bands with subtle shading
+fill(plot(showVwapStdDev ? vwapUpper1 : na), plot(showVwapStdDev ? vwapValue : na), color=color.new(color.gray, 90))
+fill(plot(showVwapStdDev ? vwapValue : na), plot(showVwapStdDev ? vwapLower1 : na), color=color.new(color.gray, 90))
+
+// Plot Fair Value Gaps (NEW in v0.1.1)
+// Bullish FVG - Green boxes
+var box bullishFVGBox = na
+if showFairValueGaps and bullishFVG
+    bullishFVGBox := box.new(bar_index, bullishFVGTop, bar_index + 1, bullishFVGBottom, 
+                              bgcolor=color.new(color.green, 85), 
+                              border_color=color.new(color.green, 60),
+                              border_width=1,
+                              extend=extend.right)
+
+// Bearish FVG - Red boxes
+var box bearishFVGBox = na
+if showFairValueGaps and bearishFVG
+    bearishFVGBox := box.new(bar_index, bearishFVGTop, bar_index + 1, bearishFVGBottom, 
+                              bgcolor=color.new(color.red, 85), 
+                              border_color=color.new(color.red, 60),
+                              border_width=1,
+                              extend=extend.right)
 
 // Plot Bollinger Bands
 plot(useBollinger ? bbUpper : na, "BB Upper", color=color.new(color.gray, 70))
@@ -301,25 +310,14 @@ plot(strategy.position_size > 0 ? (useTrailingStop ? trailStop : stopLoss) : na,
 plot(strategy.position_size > 0 ? takeProfit : na, 
      "Take Profit", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
 
-// Add price labels for active positions
+// Add price labels for active positions (ENHANCED in v0.1.1)
 if strategy.position_size > 0 and barstate.islast
-    var label entryPriceLabel = na
-    var label stopLabel = na
-    var label targetLabel = na
-    
-    label.delete(entryPriceLabel)
-    label.delete(stopLabel)
-    label.delete(targetLabel)
-    
-    entryPriceLabel := label.new(bar_index, entryPrice, 
-                                  text="Entry: " + str.tostring(entryPrice, "#.##"),
-                                  style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
-    stopLabel := label.new(bar_index, useTrailingStop ? trailStop : stopLoss,
-                           text="Stop: " + str.tostring(useTrailingStop ? trailStop : stopLoss, "#.##"),
-                           style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
-    targetLabel := label.new(bar_index, takeProfit,
-                             text="Target: " + str.tostring(takeProfit, "#.##"),
-                             style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
+    label.new(bar_index, entryPrice, text="Entry: " + str.tostring(entryPrice, "#.##"), 
+              style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
+    label.new(bar_index, useTrailingStop ? trailStop : stopLoss, text="Stop: " + str.tostring(useTrailingStop ? trailStop : stopLoss, "#.##"), 
+              style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
+    label.new(bar_index, takeProfit, text="Target: " + str.tostring(takeProfit, "#.##"), 
+              style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
 
 // ============================================================================
 // ALERTS
@@ -328,11 +326,18 @@ if strategy.position_size > 0 and barstate.islast
 alertcondition(longCondition, title="Pullback Entry Signal", 
                message="SwingFlow: LONG Entry Signal Detected!")
 
+// NEW in v0.1.1: Fair Value Gap Alerts
+alertcondition(bullishFVG, title="Bullish Fair Value Gap", 
+               message="SwingFlow: Bullish Fair Value Gap Detected!")
+
+alertcondition(bearishFVG, title="Bearish Fair Value Gap", 
+               message="SwingFlow: Bearish Fair Value Gap Detected!")
+
 // ============================================================================
 // DASHBOARD (Optional Info)
 // ============================================================================
 
-var table dashboard = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), frame_color=color.new(color.blue, 50), frame_width=1)
+var table dashboard = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 80), frame_color=color.new(color.blue, 50), frame_width=1)
 
 if barstate.islast
     table.cell(dashboard, 0, 0, "Trading Style", text_color=color.white, bgcolor=color.new(color.blue, 70))
@@ -358,10 +363,16 @@ if barstate.islast
     table.cell(dashboard, 1, 5, volumeCondition ? "✓ Strong" : "✗ Weak", 
                text_color=volumeCondition ? color.lime : color.orange, bgcolor=color.new(color.blue, 90))
     
-    table.cell(dashboard, 0, 6, "Position", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(dashboard, 1, 6, strategy.position_size > 0 ? "LONG" : "None", 
+    // NEW in v0.1.1: FVG Status
+    table.cell(dashboard, 0, 6, "FVG", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    fvgStatus = bullishFVG ? "Bullish ⬆" : bearishFVG ? "Bearish ⬇" : "None"
+    fvgColor = bullishFVG ? color.lime : bearishFVG ? color.red : color.gray
+    table.cell(dashboard, 1, 6, fvgStatus, text_color=fvgColor, bgcolor=color.new(color.blue, 90))
+    
+    table.cell(dashboard, 0, 7, "Position", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(dashboard, 1, 7, strategy.position_size > 0 ? "LONG" : "None", 
                text_color=strategy.position_size > 0 ? color.lime : color.gray, bgcolor=color.new(color.blue, 90))
     
-    table.cell(dashboard, 0, 7, "R:R Ratio", text_color=color.white, bgcolor=color.new(color.blue, 70))
-    table.cell(dashboard, 1, 7, str.tostring(riskRewardRatio) + ":1", 
+    table.cell(dashboard, 0, 8, "R:R Ratio", text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.cell(dashboard, 1, 8, str.tostring(riskRewardRatio) + ":1", 
                text_color=color.yellow, bgcolor=color.new(color.blue, 90))
