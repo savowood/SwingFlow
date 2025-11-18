@@ -1,6 +1,6 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © SwingFlow v0.2.1 Strategy
-
+// If you find this useful, buy me a coffee:  https://www.buymeacoffee.com/savowood
 //@version=6
 strategy("SwingFlow v0.2.1 Strategy", shorttitle="SF v0.2.1 BT", overlay=true, 
          initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
