@@ -1,0 +1,434 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © SwingFlow v0.2
+
+//@version=6
+indicator("SwingFlow v0.2", shorttitle="SF v0.2", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+// SETTINGS PANEL
+// ═══════════════════════════════════════════════════════════════
+
+// Trading Style Selection
+tradingStyle = input.string("Intraday", "Trading Style", options=["Scalping", "Intraday", "Swing", "Medium Term", "Long Term"], group="Trading Style")
+
+// Trade Direction
+showLongs = input.bool(true, "Show Long Signals", group="Trade Direction")
+showShorts = input.bool(true, "Show Short Signals", group="Trade Direction")
+
+// Entry Filters
+vwapCrossRequired = input.bool(true, "VWAP Cross Required", group="Entry Filters")
+macdHistogramExpansion = input.bool(true, "MACD Histogram Expansion", group="Entry Filters")
+volumeConfirmation = input.bool(true, "Volume Confirmation", group="Entry Filters")
+trendFilter = input.bool(false, "Trend Filter (50 EMA)", group="Entry Filters")
+fvgFilter = input.bool(false, "FVG Support/Resistance", group="Entry Filters")
+histogramJumpDetection = input.bool(true, "Histogram Jump Detection", group="Entry Filters")
+histogramJumpThreshold = input.float(15.0, "Histogram Jump Threshold (%)", minval=5.0, maxval=100.0, step=5.0, group="Entry Filters")
+
+// Risk Management
+rrRatio = input.float(3.0, "Risk:Reward Ratio", minval=1.0, maxval=10.0, step=0.5, group="Risk Management")
+stopLossMethod = input.string("Percentage", "Stop Loss Method", options=["Percentage", "Swing", "ATR", "VWAP"], group="Risk Management")
+stopLossPct = input.float(2.0, "Stop Loss %", minval=0.1, maxval=20.0, step=0.1, group="Risk Management")
+atrMultiplier = input.float(1.5, "ATR Multiplier (for ATR method)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+
+// Visual Options
+showEntryArrows = input.bool(true, "Show Entry Arrows", group="Visual Options")
+showStopLoss = input.bool(true, "Show Stop Loss Lines", group="Visual Options")
+showTakeProfit = input.bool(true, "Show Take Profit Lines", group="Visual Options")
+showFVG = input.bool(true, "Show Fair Value Gaps", group="Visual Options")
+showVWAPBands = input.bool(true, "Show VWAP Bands", group="Visual Options")
+show50EMA = input.bool(false, "Show 50 EMA", group="Visual Options")
+showRRLabel = input.bool(true, "Label Risk:Reward on Chart", group="Visual Options")
+
+// Alerts
+alertLongEntry = input.bool(true, "Long Entry Signal", group="Alerts")
+alertShortEntry = input.bool(true, "Short Entry Signal", group="Alerts")
+
+// ═══════════════════════════════════════════════════════════════
+// ADAPTIVE PARAMETERS BASED ON TRADING STYLE
+// ═══════════════════════════════════════════════════════════════
+
+var int macdFast = 12
+var int macdSlow = 26
+var int macdSignal = 9
+var int volumeLength = 20
+var float defaultStopPct = 2.0
+
+if tradingStyle == "Scalping"
+    macdFast := 8
+    macdSlow := 17
+    macdSignal := 9
+    volumeLength := 10
+    defaultStopPct := 0.75
+else if tradingStyle == "Intraday"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 20
+    defaultStopPct := 2.0
+else if tradingStyle == "Swing"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 30
+    defaultStopPct := 3.0
+else if tradingStyle == "Medium Term"
+    macdFast := 19
+    macdSlow := 39
+    macdSignal := 9
+    volumeLength := 50
+    defaultStopPct := 6.0
+else if tradingStyle == "Long Term"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 20  // On weekly, this is 20 weeks
+    defaultStopPct := 12.0
+
+// ═══════════════════════════════════════════════════════════════
+// INDICATOR CALCULATIONS
+// ═══════════════════════════════════════════════════════════════
+
+// VWAP and Bands
+vwapValue = ta.vwap(close)
+vwapStdDev = ta.stdev(close, 20)
+vwapUpper1 = vwapValue + vwapStdDev
+vwapLower1 = vwapValue - vwapStdDev
+vwapUpper2 = vwapValue + (vwapStdDev * 2)
+vwapLower2 = vwapValue - (vwapStdDev * 2)
+
+// MACD
+[macdLine, signalLine, histogram] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// Volume
+volumeMA = ta.sma(volume, volumeLength)
+volumeSurge = volume > volumeMA
+
+// 50 EMA (Trend Filter)
+ema50 = ta.ema(close, 50)
+
+// ATR (for stop loss)
+atr = ta.atr(14)
+
+// ═══════════════════════════════════════════════════════════════
+// MACD HISTOGRAM ANALYSIS
+// ═══════════════════════════════════════════════════════════════
+
+// Detect histogram expansion
+histogramExpanding = histogram > histogram[1] and histogram > 0
+histogramContractingDown = histogram < histogram[1] and histogram < 0
+
+// Detect histogram "jump" - was declining, then suddenly surges back
+histogramDeclining = histogram[1] < histogram[2] and histogram[2] < histogram[3]
+histogramJump = histogramDeclining and (histogram > histogram[1] * (1 + histogramJumpThreshold / 100)) and histogram > 0
+
+histogramDecliningBearish = histogram[1] > histogram[2] and histogram[2] > histogram[3]
+histogramJumpBearish = histogramDecliningBearish and (histogram < histogram[1] * (1 - histogramJumpThreshold / 100)) and histogram < 0
+
+// ═══════════════════════════════════════════════════════════════
+// FAIR VALUE GAPS (FVG) DETECTION
+// ═══════════════════════════════════════════════════════════════
+
+// Bullish FVG: Gap between bar[2] high and current bar low
+bullishFVG = low > high[2] and (low - high[2]) / close > 0.005  // 0.5% minimum gap
+bullishFVGtop = low
+bullishFVGbottom = high[2]
+
+// Bearish FVG: Gap between bar[2] low and current bar high
+bearishFVG = high < low[2] and (low[2] - high) / close > 0.005
+bearishFVGtop = low[2]
+bearishFVGbottom = high
+
+// Track FVG boxes and remove when price fills them
+var box[] bullishFVGboxes = array.new<box>()
+var box[] bearishFVGboxes = array.new<box>()
+
+// Create new FVG boxes
+if bullishFVG and showFVG
+    fvgBox = box.new(bar_index - 2, bullishFVGtop, bar_index + 20, bullishFVGbottom, 
+                      border_color=color.new(color.green, 80), 
+                      bgcolor=color.new(color.green, 90),
+                      border_width=1)
+    array.push(bullishFVGboxes, fvgBox)
+
+if bearishFVG and showFVG
+    fvgBox = box.new(bar_index - 2, bearishFVGtop, bar_index + 20, bearishFVGbottom, 
+                      border_color=color.new(color.red, 80), 
+                      bgcolor=color.new(color.red, 90),
+                      border_width=1)
+    array.push(bearishFVGboxes, fvgBox)
+
+// Remove filled FVG boxes
+if array.size(bullishFVGboxes) > 0
+    for i = array.size(bullishFVGboxes) - 1 to 0
+        fvgBox = array.get(bullishFVGboxes, i)
+        fvgBottom = box.get_bottom(fvgBox)
+        if low <= fvgBottom  // FVG filled
+            box.delete(fvgBox)
+            array.remove(bullishFVGboxes, i)
+
+if array.size(bearishFVGboxes) > 0
+    for i = array.size(bearishFVGboxes) - 1 to 0
+        fvgBox = array.get(bearishFVGboxes, i)
+        fvgTop = box.get_top(fvgBox)
+        if high >= fvgTop  // FVG filled
+            box.delete(fvgBox)
+            array.remove(bearishFVGboxes, i)
+
+// Extend unfilled boxes
+if array.size(bullishFVGboxes) > 0
+    for i = 0 to array.size(bullishFVGboxes) - 1
+        box.set_right(array.get(bullishFVGboxes, i), bar_index + 5)
+
+if array.size(bearishFVGboxes) > 0
+    for i = 0 to array.size(bearishFVGboxes) - 1
+        box.set_right(array.get(bearishFVGboxes, i), bar_index + 5)
+
+// ═══════════════════════════════════════════════════════════════
+// ENTRY SIGNAL LOGIC
+// ═══════════════════════════════════════════════════════════════
+
+// VWAP Cross Detection
+vwapCrossUp = ta.crossover(close, vwapValue) or (close > vwapValue and close[1] <= vwapValue)
+vwapCrossDown = ta.crossunder(close, vwapValue) or (close < vwapValue and close[1] >= vwapValue)
+
+// Check if price is near VWAP (within 1% for pullback entries)
+nearVWAP = math.abs(close - vwapValue) / vwapValue < 0.01
+
+// Build entry conditions
+longCondition = true
+shortCondition = true
+
+// VWAP Filter
+if vwapCrossRequired
+    longCondition := longCondition and (vwapCrossUp or (close > vwapValue and nearVWAP[1]))
+    shortCondition := shortCondition and (vwapCrossDown or (close < vwapValue and nearVWAP[1]))
+else
+    longCondition := longCondition and close > vwapValue
+    shortCondition := shortCondition and close < vwapValue
+
+// MACD Histogram Filter
+if macdHistogramExpansion
+    longCondition := longCondition and (histogramExpanding or (histogramJumpDetection and histogramJump))
+    shortCondition := shortCondition and (histogramContractingDown or (histogramJumpDetection and histogramJumpBearish))
+else
+    longCondition := longCondition and histogram > 0
+    shortCondition := shortCondition and histogram < 0
+
+// Volume Filter
+if volumeConfirmation
+    longCondition := longCondition and volumeSurge
+    shortCondition := shortCondition and volumeSurge
+
+// Trend Filter
+if trendFilter
+    longCondition := longCondition and close > ema50
+    shortCondition := shortCondition and close < ema50
+
+// FVG Filter
+if fvgFilter
+    hasBullishFVGSupport = false
+    hasBearishFVGResistance = false
+    
+    // Check if there's a bullish FVG below current price
+    if array.size(bullishFVGboxes) > 0
+        for i = 0 to array.size(bullishFVGboxes) - 1
+            fvgTop = box.get_top(array.get(bullishFVGboxes, i))
+            if fvgTop < close
+                hasBullishFVGSupport := true
+                break
+    
+    // Check if there's a bearish FVG above current price
+    if array.size(bearishFVGboxes) > 0
+        for i = 0 to array.size(bearishFVGboxes) - 1
+            fvgBottom = box.get_bottom(array.get(bearishFVGboxes, i))
+            if fvgBottom > close
+                hasBearishFVGResistance := true
+                break
+    
+    longCondition := longCondition and hasBullishFVGSupport
+    shortCondition := shortCondition and hasBearishFVGResistance
+
+// Additional MACD confirmation
+longCondition := longCondition and macdLine > signalLine
+shortCondition := shortCondition and macdLine < signalLine
+
+// Final signals
+longSignal = longCondition and showLongs
+shortSignal = shortCondition and showShorts
+
+// ═══════════════════════════════════════════════════════════════
+// STOP LOSS AND TAKE PROFIT CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+var float longEntryPrice = na
+var float longStopLoss = na
+var float longTP1 = na
+var float longTP2 = na
+
+var float shortEntryPrice = na
+var float shortStopLoss = na
+var float shortTP1 = na
+var float shortTP2 = na
+
+// Calculate swing high/low for swing-based stops
+swingLow = ta.lowest(low, 10)
+swingHigh = ta.highest(high, 10)
+
+// Long Entry
+if longSignal
+    longEntryPrice := close
+    
+    // Calculate stop loss based on method
+    if stopLossMethod == "Percentage"
+        longStopLoss := longEntryPrice * (1 - stopLossPct / 100)
+    else if stopLossMethod == "Swing"
+        longStopLoss := swingLow
+    else if stopLossMethod == "ATR"
+        longStopLoss := longEntryPrice - (atr * atrMultiplier)
+    else if stopLossMethod == "VWAP"
+        longStopLoss := vwapLower1
+    
+    // Calculate risk
+    riskAmount = longEntryPrice - longStopLoss
+    
+    // Calculate take profits
+    longTP1 := longEntryPrice + (riskAmount * rrRatio * 0.5)  // Conservative TP1
+    longTP2 := longEntryPrice + (riskAmount * rrRatio)
+
+// Short Entry
+if shortSignal
+    shortEntryPrice := close
+    
+    // Calculate stop loss based on method
+    if stopLossMethod == "Percentage"
+        shortStopLoss := shortEntryPrice * (1 + stopLossPct / 100)
+    else if stopLossMethod == "Swing"
+        shortStopLoss := swingHigh
+    else if stopLossMethod == "ATR"
+        shortStopLoss := shortEntryPrice + (atr * atrMultiplier)
+    else if stopLossMethod == "VWAP"
+        shortStopLoss := vwapUpper1
+    
+    // Calculate risk
+    riskAmount = shortStopLoss - shortEntryPrice
+    
+    // Calculate take profits
+    shortTP1 := shortEntryPrice - (riskAmount * rrRatio * 0.5)
+    shortTP2 := shortEntryPrice - (riskAmount * rrRatio)
+
+// ═══════════════════════════════════════════════════════════════
+// VISUAL PLOTS
+// ═══════════════════════════════════════════════════════════════
+
+// VWAP and Bands
+plot(showVWAPBands ? vwapValue : na, "VWAP", color=color.new(color.blue, 0), linewidth=2)
+plot(showVWAPBands ? vwapUpper1 : na, "VWAP +1σ", color=color.new(color.blue, 70), linewidth=1)
+plot(showVWAPBands ? vwapLower1 : na, "VWAP -1σ", color=color.new(color.blue, 70), linewidth=1)
+plot(showVWAPBands ? vwapUpper2 : na, "VWAP +2σ", color=color.new(color.blue, 85), linewidth=1, style=plot.style_circles)
+plot(showVWAPBands ? vwapLower2 : na, "VWAP -2σ", color=color.new(color.blue, 85), linewidth=1, style=plot.style_circles)
+
+// 50 EMA
+plot(show50EMA ? ema50 : na, "50 EMA", color=color.new(color.orange, 0), linewidth=2)
+
+// Entry Arrows
+plotshape(showEntryArrows and longSignal, "Long Entry", shape.triangleup, location.belowbar, 
+          color=color.new(color.green, 0), size=size.small)
+plotshape(showEntryArrows and shortSignal, "Short Entry", shape.triangledown, location.abovebar, 
+          color=color.new(color.red, 0), size=size.small)
+
+// Entry Labels with R:R info
+if showRRLabel and longSignal
+    riskPct = (longEntryPrice - longStopLoss) / longEntryPrice * 100
+    tp1Pct = (longTP1 - longEntryPrice) / longEntryPrice * 100
+    tp2Pct = (longTP2 - longEntryPrice) / longEntryPrice * 100
+    labelText = "📈 LONG $" + str.tostring(longEntryPrice, "#.##") + "\n" +
+                 "🛡️ SL: $" + str.tostring(longStopLoss, "#.##") + " (-" + str.tostring(riskPct, "#.#") + "%)\n" +
+                 "🎯 TP1: $" + str.tostring(longTP1, "#.##") + " (+" + str.tostring(tp1Pct, "#.#") + "%)\n" +
+                 "🎯 TP2: $" + str.tostring(longTP2, "#.##") + " (+" + str.tostring(tp2Pct, "#.#") + "%)"
+    label.new(bar_index, low, labelText, 
+              style=label.style_label_up, 
+              color=color.new(color.green, 10), 
+              textcolor=color.white, 
+              size=size.small)
+
+if showRRLabel and shortSignal
+    riskPct = (shortStopLoss - shortEntryPrice) / shortEntryPrice * 100
+    tp1Pct = (shortEntryPrice - shortTP1) / shortEntryPrice * 100
+    tp2Pct = (shortEntryPrice - shortTP2) / shortEntryPrice * 100
+    labelText = "📉 SHORT $" + str.tostring(shortEntryPrice, "#.##") + "\n" +
+                 "🛡️ SL: $" + str.tostring(shortStopLoss, "#.##") + " (+" + str.tostring(riskPct, "#.#") + "%)\n" +
+                 "🎯 TP1: $" + str.tostring(shortTP1, "#.##") + " (-" + str.tostring(tp1Pct, "#.#") + "%)\n" +
+                 "🎯 TP2: $" + str.tostring(shortTP2, "#.##") + " (-" + str.tostring(tp2Pct, "#.#") + "%)"
+    label.new(bar_index, high, labelText, 
+              style=label.style_label_down, 
+              color=color.new(color.red, 10), 
+              textcolor=color.white, 
+              size=size.small)
+
+// Stop Loss Lines
+var line longSLLine = na
+var line shortSLLine = na
+
+if showStopLoss and longSignal
+    if not na(longSLLine)
+        line.delete(longSLLine)
+    longSLLine := line.new(bar_index, longStopLoss, bar_index + 20, longStopLoss, 
+                            color=color.new(color.blue, 0), width=2, style=line.style_dashed)
+
+if showStopLoss and shortSignal
+    if not na(shortSLLine)
+        line.delete(shortSLLine)
+    shortSLLine := line.new(bar_index, shortStopLoss, bar_index + 20, shortStopLoss, 
+                             color=color.new(color.blue, 0), width=2, style=line.style_dashed)
+
+// Take Profit Lines
+var line longTP1Line = na
+var line longTP2Line = na
+var line shortTP1Line = na
+var line shortTP2Line = na
+
+if showTakeProfit and longSignal
+    if not na(longTP1Line)
+        line.delete(longTP1Line)
+    if not na(longTP2Line)
+        line.delete(longTP2Line)
+    longTP1Line := line.new(bar_index, longTP1, bar_index + 20, longTP1, 
+                             color=color.new(color.yellow, 0), width=2)
+    longTP2Line := line.new(bar_index, longTP2, bar_index + 20, longTP2, 
+                             color=color.new(color.orange, 0), width=2)
+
+if showTakeProfit and shortSignal
+    if not na(shortTP1Line)
+        line.delete(shortTP1Line)
+    if not na(shortTP2Line)
+        line.delete(shortTP2Line)
+    shortTP1Line := line.new(bar_index, shortTP1, bar_index + 20, shortTP1, 
+                              color=color.new(color.yellow, 0), width=2)
+    shortTP2Line := line.new(bar_index, shortTP2, bar_index + 20, shortTP2, 
+                              color=color.new(color.orange, 0), width=2)
+
+// ═══════════════════════════════════════════════════════════════
+// HISTOGRAM JUMP VISUAL INDICATOR
+// ═══════════════════════════════════════════════════════════════
+
+// Plot a marker when histogram jump is detected
+plotshape(histogramJumpDetection and histogramJump, "Histogram Jump (Bull)", 
+          shape.diamond, location.belowbar, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(histogramJumpDetection and histogramJumpBearish, "Histogram Jump (Bear)", 
+          shape.diamond, location.abovebar, color=color.new(color.fuchsia, 0), size=size.tiny)
+
+// ═══════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════
+
+alertcondition(alertLongEntry and longSignal, "Long Entry Signal", "SwingFlow: Long Entry Signal Detected!")
+alertcondition(alertShortEntry and shortSignal, "Short Entry Signal", "SwingFlow: Short Entry Signal Detected!")
+
+// ═══════════════════════════════════════════════════════════════
+// MACD PANEL (Separate Window)
+// ═══════════════════════════════════════════════════════════════
+
+// Note: MACD should be plotted in a separate indicator window
+// Users should add the standard MACD indicator to see the histogram visualization
+// The histogram expansion logic is built into the entry conditions above
+
