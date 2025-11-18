@@ -1,0 +1,276 @@
+//@version=5
+indicator("SwingFlow v0.1.2", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// INPUTS - Improved Defaults for Clean Visualization
+// ============================================================================
+
+// Swing Detection Settings
+swingLength = input.int(25, "Swing Detection Length", minval=5, maxval=50, 
+     tooltip="Higher values = fewer, more significant swings")
+minSwingStrength = input.float(0.3, "Minimum Swing Strength", minval=0.1, maxval=1.0, step=0.1,
+     tooltip="Filters out weak swings (0.3 = moderate strength required)")
+
+// Touch Sensitivity
+atrPeriod = input.int(14, "ATR Period", minval=5, maxval=50)
+touchSensitivity = input.float(0.5, "Touch Sensitivity", minval=0.2, maxval=2.0, step=0.1,
+     tooltip="Higher = more lenient touch detection (0.5 = balanced)")
+minTouches = input.int(2, "Minimum Touches to Display", minval=1, maxval=5,
+     tooltip="Only show levels with this many touches")
+
+// Display Settings
+maxSwingLevels = input.int(5, "Maximum Swing Levels", minval=3, maxval=10,
+     tooltip="Limit number of displayed levels for clarity")
+showOldSwings = input.bool(false, "Show Inactive Swings", 
+     tooltip="Keep or remove swings after breakout")
+barsToKeepSwing = input.int(50, "Bars Before Removing Swing", minval=20, maxval=200)
+
+// Visual Settings
+lineWidth = input.int(2, "Line Width", minval=1, maxval=4)
+labelSize = input.string("small", "Label Size", options=["tiny", "small", "normal", "large"])
+showBackground = input.bool(false, "Show Background Color",
+     tooltip="Enable subtle background coloring (recommended: off)")
+bgTransparency = input.int(95, "Background Transparency", minval=80, maxval=98)
+
+// Color Scheme - Simplified 3-Color System
+bullishColor = input.color(color.new(color.green, 0), "Bullish Color")
+bearishColor = input.color(color.new(color.red, 0), "Bearish Color")
+neutralColor = input.color(color.new(color.gray, 0), "Neutral Color")
+
+// ============================================================================
+// SWING DETECTION LOGIC
+// ============================================================================
+
+// Calculate swing highs and lows
+swingHigh = ta.pivothigh(high, swingLength, swingLength)
+swingLow = ta.pivotlow(low, swingLength, swingLength)
+
+// ATR for touch detection
+atrValue = ta.atr(atrPeriod)
+touchThreshold = atrValue * touchSensitivity
+
+// ============================================================================
+// SWING LEVEL TRACKING
+// ============================================================================
+
+var array<float> swingLevels = array.new<float>()
+var array<int> swingBars = array.new<int>()
+var array<int> touchCounts = array.new<int>()
+var array<bool> isSupport = array.new<bool>()
+var array<int> lastTouchBar = array.new<int>()
+
+// Function to calculate swing strength
+calcSwingStrength(priceLevel, lookback) =>
+    strength = 0.0
+    touchCount = 0
+    for i = 1 to lookback
+        if math.abs(high[i] - priceLevel) <= touchThreshold or math.abs(low[i] - priceLevel) <= touchThreshold
+            touchCount += 1
+    strength := touchCount / lookback
+    strength
+
+// Add new swing high
+if not na(swingHigh)
+    swingStrength = calcSwingStrength(swingHigh, swingLength * 2)
+    if swingStrength >= minSwingStrength
+        array.push(swingLevels, swingHigh)
+        array.push(swingBars, bar_index - swingLength)
+        array.push(touchCounts, 1)
+        array.push(isSupport, false)
+        array.push(lastTouchBar, bar_index - swingLength)
+
+// Add new swing low
+if not na(swingLow)
+    swingStrength = calcSwingStrength(swingLow, swingLength * 2)
+    if swingStrength >= minSwingStrength
+        array.push(swingLevels, swingLow)
+        array.push(swingBars, bar_index - swingLength)
+        array.push(touchCounts, 1)
+        array.push(isSupport, true)
+        array.push(lastTouchBar, bar_index - swingLength)
+
+// ============================================================================
+// TOUCH DETECTION AND LEVEL MANAGEMENT
+// ============================================================================
+
+if array.size(swingLevels) > 0
+    for i = array.size(swingLevels) - 1 to 0
+        // Safety check - ensure all arrays are same size
+        if i < array.size(swingLevels) and 
+           i < array.size(swingBars) and 
+           i < array.size(touchCounts) and 
+           i < array.size(isSupport) and 
+           i < array.size(lastTouchBar)
+            
+            level = array.get(swingLevels, i)
+            barAge = bar_index - array.get(swingBars, i)
+            lastTouch = bar_index - array.get(lastTouchBar, i)
+            
+            // Check for new touches
+            isTouching = math.abs(high - level) <= touchThreshold or math.abs(low - level) <= touchThreshold
+            if isTouching
+                array.set(touchCounts, i, array.get(touchCounts, i) + 1)
+                array.set(lastTouchBar, i, bar_index)
+            
+            // Remove old or broken levels
+            shouldRemove = false
+            
+            // Remove if too old without recent touches
+            if not showOldSwings and lastTouch > barsToKeepSwing
+                shouldRemove := true
+            
+            // Remove if price clearly broke through
+            supportBroken = array.get(isSupport, i) and close < level - (touchThreshold * 2)
+            resistanceBroken = not array.get(isSupport, i) and close > level + (touchThreshold * 2)
+            if not showOldSwings and (supportBroken or resistanceBroken)
+                shouldRemove := true
+            
+            if shouldRemove
+                array.remove(swingLevels, i)
+                array.remove(swingBars, i)
+                array.remove(touchCounts, i)
+                array.remove(isSupport, i)
+                array.remove(lastTouchBar, i)
+
+// ============================================================================
+// SORTING AND LIMITING DISPLAY
+// ============================================================================
+
+// Sort by touch count and keep only top levels
+if array.size(swingLevels) > maxSwingLevels
+    // Remove levels beyond maxSwingLevels
+    while array.size(swingLevels) > maxSwingLevels
+        // Safety check
+        if array.size(touchCounts) > 0
+            // Find index with lowest touch count
+            minTouchIdx = 0
+            minTouchCount = array.get(touchCounts, 0)
+            for i = 1 to array.size(touchCounts) - 1
+                if array.get(touchCounts, i) < minTouchCount
+                    minTouchCount := array.get(touchCounts, i)
+                    minTouchIdx := i
+            
+            // Remove the weakest level
+            array.remove(swingLevels, minTouchIdx)
+            array.remove(swingBars, minTouchIdx)
+            array.remove(touchCounts, minTouchIdx)
+            array.remove(isSupport, minTouchIdx)
+            array.remove(lastTouchBar, minTouchIdx)
+        else
+            break
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Clear old drawings
+var array<line> lines = array.new<line>()
+var array<label> labels = array.new<label>()
+
+if barstate.islast
+    // Clear previous drawings
+    if array.size(lines) > 0
+        for i = 0 to array.size(lines) - 1
+            line.delete(array.get(lines, i))
+    if array.size(labels) > 0
+        for i = 0 to array.size(labels) - 1
+            label.delete(array.get(labels, i))
+    array.clear(lines)
+    array.clear(labels)
+    
+    // Draw current swing levels
+    if array.size(swingLevels) > 0
+        for i = 0 to array.size(swingLevels) - 1
+            // Safety check before accessing arrays
+            if i < array.size(swingLevels) and 
+               i < array.size(swingBars) and 
+               i < array.size(touchCounts) and 
+               i < array.size(isSupport)
+                
+                level = array.get(swingLevels, i)
+                startBar = array.get(swingBars, i)
+                touches = array.get(touchCounts, i)
+                isSup = array.get(isSupport, i)
+                
+                // Only display if meets minimum touch requirement
+                if touches >= minTouches
+                    // Determine color and style
+                    lineColor = isSup ? bullishColor : bearishColor
+                    lineStyle = touches >= 3 ? line.style_solid : line.style_dashed
+                    
+                    // Determine line strength based on touches
+                    displayWidth = touches >= 4 ? lineWidth + 1 : lineWidth
+                    
+                    // Draw line
+                    l = line.new(startBar, level, bar_index + 10, level, 
+                         color=lineColor, width=displayWidth, style=lineStyle)
+                    array.push(lines, l)
+                    
+                    // Create label text
+                    labelText = str.tostring(touches) + " touch" + (touches > 1 ? "es" : "")
+                    labelColor = isSup ? color.new(bullishColor, 20) : color.new(bearishColor, 20)
+                    labelStyle = isSup ? label.style_label_up : label.style_label_down
+                    
+                    // Size based on input
+                    lblSize = labelSize == "tiny" ? size.tiny : 
+                             labelSize == "small" ? size.small :
+                             labelSize == "normal" ? size.normal : size.large
+                    
+                    // Draw label
+                    lbl = label.new(bar_index, level, labelText, 
+                         color=labelColor, textcolor=lineColor, 
+                         style=labelStyle, size=lblSize)
+                    array.push(labels, lbl)
+
+// ============================================================================
+// BACKGROUND COLORING (Optional)
+// ============================================================================
+
+if showBackground and array.size(swingLevels) > 0
+    // Determine current zone
+    inBullishZone = false
+    inBearishZone = false
+    
+    for i = 0 to array.size(swingLevels) - 1
+        // Safety check
+        if i < array.size(swingLevels) and i < array.size(isSupport)
+            level = array.get(swingLevels, i)
+            isSup = array.get(isSupport, i)
+            
+            if isSup and close > level - touchThreshold and close < level + touchThreshold
+                inBullishZone := true
+            if not isSup and close > level - touchThreshold and close < level + touchThreshold
+                inBearishZone := true
+    
+    // Apply background
+    bgColor = inBullishZone ? color.new(bullishColor, bgTransparency) :
+              inBearishZone ? color.new(bearishColor, bgTransparency) :
+              color.new(neutralColor, bgTransparency + 3)
+    bgcolor(bgColor)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+// Price touching support/resistance alert
+touchingLevel = false
+levelType = ""
+
+if array.size(swingLevels) > 0
+    for i = 0 to array.size(swingLevels) - 1
+        // Safety check
+        if i < array.size(swingLevels) and i < array.size(isSupport)
+            level = array.get(swingLevels, i)
+            isSup = array.get(isSupport, i)
+            
+            if math.abs(close - level) <= touchThreshold
+                touchingLevel := true
+                levelType := isSup ? "Support" : "Resistance"
+
+alertcondition(touchingLevel, "SwingFlow Level Touch", "Price touching {{ticker}} level")
+
+// ============================================================================
+// PLOTS FOR DEBUGGING (Hidden by default)
+// ============================================================================
+
+plot(na, "Active Levels", display=display.none)  // Placeholder for data window

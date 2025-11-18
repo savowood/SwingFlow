@@ -1,0 +1,319 @@
+# SwingFlow v0.1.2
+# Enhanced defaults for cleaner visualization and better usability
+# Compatible with TOS (ThinkScript)
+
+declare upper;
+
+# ============================================================================
+# INPUTS - Improved Defaults for Clean Visualization
+# ============================================================================
+
+# Swing Detection Settings
+input swingLength = 25;  # Higher value = fewer, more significant swings
+input minSwingStrength = 0.3;  # Filters weak swings (0.3 = moderate strength)
+
+# Touch Sensitivity
+input atrPeriod = 14;
+input touchSensitivity = 0.5;  # Higher = more lenient (0.5 = balanced)
+input minTouches = 2;  # Only show levels with this many touches
+
+# Display Settings
+input maxSwingLevels = 5;  # Limit displayed levels for clarity
+input showOldSwings = no;  # Remove levels after breakout
+input barsToKeepSwing = 50;  # Bars before removing inactive swing
+
+# Visual Settings
+input showLabels = yes;
+input showBackground = no;  # Subtle background (recommended: off)
+input lineWidth = 2;
+
+# Color Scheme - Simplified 3-Color System
+input bullishColor = Color.GREEN;
+input bearishColor = Color.RED;
+input neutralColor = Color.GRAY;
+
+# ============================================================================
+# SWING DETECTION LOGIC
+# ============================================================================
+
+# Calculate swing highs and lows using pivots
+def swingHigh = if high == Highest(high, 2 * swingLength + 1)[swingLength]
+                then high[swingLength]
+                else Double.NaN;
+
+def swingLow = if low == Lowest(low, 2 * swingLength + 1)[swingLength]
+               then low[swingLength]
+               else Double.NaN;
+
+# ATR for touch detection
+def atrValue = Average(TrueRange(high, close, low), atrPeriod);
+def touchThreshold = atrValue * touchSensitivity;
+
+# ============================================================================
+# SWING STRENGTH CALCULATION
+# ============================================================================
+
+script CalcSwingStrength {
+    input priceLevel = 0.0;
+    input lookback = 50;
+    input threshold = 0.0;
+    
+    def touchCount = fold i = 1 to lookback + 1 with count = 0 do
+        if AbsValue(high[i] - priceLevel) <= threshold or 
+           AbsValue(low[i] - priceLevel) <= threshold
+        then count + 1
+        else count;
+    
+    plot strength = touchCount / lookback;
+}
+
+# ============================================================================
+# SWING LEVEL TRACKING
+# ============================================================================
+
+# Track up to 20 potential swing levels (system will filter to maxSwingLevels)
+def level1 = if !IsNaN(swingHigh) and 
+                CalcSwingStrength(swingHigh, swingLength * 2, touchThreshold) >= minSwingStrength
+             then swingHigh
+             else level1[1];
+
+def level2 = if !IsNaN(swingLow) and 
+                CalcSwingStrength(swingLow, swingLength * 2, touchThreshold) >= minSwingStrength
+             then swingLow
+             else level2[1];
+
+# Support/Resistance designation
+def level1IsSupport = no;  # High = Resistance
+def level2IsSupport = yes;  # Low = Support
+
+# ============================================================================
+# TOUCH COUNTING
+# ============================================================================
+
+script CountTouches {
+    input level = 0.0;
+    input threshold = 0.0;
+    input maxBars = 100;
+    
+    def touchDetected = AbsValue(high - level) <= threshold or 
+                        AbsValue(low - level) <= threshold;
+    
+    def count = if touchDetected 
+                then count[1] + 1 
+                else count[1];
+    
+    # Reset if level hasn't been touched in maxBars
+    def barsSinceTouch = if touchDetected then 0 else barsSinceTouch[1] + 1;
+    def resetCount = barsSinceTouch > maxBars;
+    
+    plot touches = if resetCount then 0 else count;
+}
+
+def level1Touches = CountTouches(level1, touchThreshold, barsToKeepSwing);
+def level2Touches = CountTouches(level2, touchThreshold, barsToKeepSwing);
+
+# ============================================================================
+# LEVEL VALIDATION
+# ============================================================================
+
+script ValidateLevel {
+    input level = 0.0;
+    input touches = 0;
+    input minTouches = 2;
+    input isSupport = yes;
+    input showOld = no;
+    input threshold = 0.0;
+    
+    # Check if level is broken
+    def supportBroken = isSupport and close < level - (threshold * 2);
+    def resistanceBroken = !isSupport and close > level + (threshold * 2);
+    def isBroken = supportBroken or resistanceBroken;
+    
+    # Validate
+    def isValid = touches >= minTouches and 
+                  level > 0 and 
+                  (showOld or !isBroken);
+    
+    plot valid = isValid;
+}
+
+def level1Valid = ValidateLevel(level1, level1Touches, minTouches, 
+                                level1IsSupport, showOldSwings, touchThreshold);
+def level2Valid = ValidateLevel(level2, level2Touches, minTouches, 
+                                level2IsSupport, showOldSwings, touchThreshold);
+
+# ============================================================================
+# PRICE PROXIMITY DETECTION
+# ============================================================================
+
+script IsNearLevel {
+    input level = 0.0;
+    input threshold = 0.0;
+    input isValid = yes;
+    
+    def nearLevel = isValid and 
+                    AbsValue(close - level) <= threshold * 1.5;
+    
+    plot near = nearLevel;
+}
+
+def nearLevel1 = IsNearLevel(level1, touchThreshold, level1Valid);
+def nearLevel2 = IsNearLevel(level2, touchThreshold, level2Valid);
+
+# ============================================================================
+# PLOTTING - PRIMARY LEVELS
+# ============================================================================
+
+# Resistance Level 1 (Swing High)
+plot Resistance1 = if level1Valid then level1 else Double.NaN;
+Resistance1.SetDefaultColor(CreateColor(220, 50, 50));  # Red
+Resistance1.SetLineWeight(lineWidth);
+Resistance1.SetStyle(if level1Touches >= 3 then Curve.FIRM else Curve.LONG_DASH);
+Resistance1.HideBubble();
+Resistance1.HideTitle();
+
+# Support Level 2 (Swing Low)
+plot Support1 = if level2Valid then level2 else Double.NaN;
+Support1.SetDefaultColor(CreateColor(50, 220, 50));  # Green
+Support1.SetLineWeight(lineWidth);
+Support1.SetStyle(if level2Touches >= 3 then Curve.FIRM else Curve.LONG_DASH);
+Support1.HideBubble();
+Support1.HideTitle();
+
+# ============================================================================
+# LABELS
+# ============================================================================
+
+# Resistance Label
+AddLabel(showLabels and level1Valid, 
+         "R: " + AsText(level1, NumberFormat.TWO_DECIMAL_PLACES) + 
+         " (" + level1Touches + "x)", 
+         if nearLevel1 then Color.YELLOW else Color.RED);
+
+# Support Label
+AddLabel(showLabels and level2Valid, 
+         "S: " + AsText(level2, NumberFormat.TWO_DECIMAL_PLACES) + 
+         " (" + level2Touches + "x)", 
+         if nearLevel2 then Color.YELLOW else Color.GREEN);
+
+# ============================================================================
+# BACKGROUND COLORING (Optional)
+# ============================================================================
+
+def inBullishZone = nearLevel2 and level2Valid;
+def inBearishZone = nearLevel1 and level1Valid;
+
+AddCloud(
+    if showBackground and inBullishZone then close else Double.NaN,
+    if showBackground and inBullishZone then close * 0.9999 else Double.NaN,
+    CreateColor(50, 220, 50), CreateColor(50, 220, 50)
+);
+
+AddCloud(
+    if showBackground and inBearishZone then close * 1.0001 else Double.NaN,
+    if showBackground and inBearishZone then close else Double.NaN,
+    CreateColor(220, 50, 50), CreateColor(220, 50, 50)
+);
+
+# ============================================================================
+# ENHANCED VERSION WITH MORE LEVELS (Optional)
+# ============================================================================
+# Uncomment below for tracking more swing levels
+# Note: TOS has limitations on number of plots, so we keep it simple
+
+# Additional swing tracking for more comprehensive analysis
+def swingHigh2 = if !IsNaN(swingHigh) and swingHigh != level1
+                 then swingHigh
+                 else swingHigh2[1];
+
+def swingLow2 = if !IsNaN(swingLow) and swingLow != level2
+                then swingLow
+                else swingLow2[1];
+
+# Additional level touches
+def level3Touches = CountTouches(swingHigh2, touchThreshold, barsToKeepSwing);
+def level4Touches = CountTouches(swingLow2, touchThreshold, barsToKeepSwing);
+
+# Additional level validation
+def level3Valid = ValidateLevel(swingHigh2, level3Touches, minTouches, 
+                                no, showOldSwings, touchThreshold) and
+                  maxSwingLevels >= 3;
+def level4Valid = ValidateLevel(swingLow2, level4Touches, minTouches, 
+                                yes, showOldSwings, touchThreshold) and
+                  maxSwingLevels >= 4;
+
+# Plot additional levels
+plot Resistance2 = if level3Valid then swingHigh2 else Double.NaN;
+Resistance2.SetDefaultColor(CreateColor(180, 50, 50));
+Resistance2.SetLineWeight(lineWidth - 1);
+Resistance2.SetStyle(Curve.SHORT_DASH);
+Resistance2.HideBubble();
+Resistance2.HideTitle();
+
+plot Support2 = if level4Valid then swingLow2 else Double.NaN;
+Support2.SetDefaultColor(CreateColor(50, 180, 50));
+Support2.SetLineWeight(lineWidth - 1);
+Support2.SetStyle(Curve.SHORT_DASH);
+Support2.HideBubble();
+Support2.HideTitle();
+
+# ============================================================================
+# ALERTS
+# ============================================================================
+
+# Alert when price touches a valid level
+Alert(nearLevel1 or nearLevel2, "Price touching SwingFlow level", Alert.BAR, Sound.Bell);
+
+# ============================================================================
+# CHART BUBBLES FOR TOUCH COUNT (Optional)
+# ============================================================================
+
+def showBubbles = yes;
+def bubbleOffset = 5;
+
+AddChartBubble(
+    showBubbles and level1Valid and IsNaN(Resistance1[-bubbleOffset]) and !IsNaN(Resistance1),
+    level1,
+    level1Touches + " touches",
+    Color.RED,
+    yes
+);
+
+AddChartBubble(
+    showBubbles and level2Valid and IsNaN(Support1[-bubbleOffset]) and !IsNaN(Support1),
+    level2,
+    level2Touches + " touches",
+    Color.GREEN,
+    no
+);
+
+# ============================================================================
+# NOTES AND USAGE INSTRUCTIONS
+# ============================================================================
+# 
+# SwingFlow v0.1.2
+# 
+# OPTIMAL TIMEFRAMES: 
+# - 5min, 15min, 1hr, Daily
+# 
+# PARAMETER GUIDE:
+# - swingLength (25): Higher = major swings only, Lower = more levels
+# - touchSensitivity (0.5): Adjust based on volatility
+# - minTouches (2): Increase to 3-4 for high-confidence levels only
+# - maxSwingLevels (5): Limit clutter, focus on key levels
+# 
+# COLOR CODING:
+# - Green = Support (swing lows)
+# - Red = Resistance (swing highs)
+# - Solid lines = 3+ touches (strong levels)
+# - Dashed lines = 2 touches (developing levels)
+# - Yellow labels = Price near level (watch for bounce/break)
+# 
+# BEST PRACTICES:
+# 1. Start with default settings
+# 2. Adjust swingLength for your trading style
+# 3. Use alerts for level touches
+# 4. Combine with volume analysis
+# 5. Wait for confirmation before trading bounces/breaks
+# 
+# ============================================================================

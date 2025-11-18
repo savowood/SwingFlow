@@ -1,319 +1,260 @@
-# SwingFlow v0.1.1
-## Advanced Pullback Trading Strategy
-### *"Swing with the Flow"*
+# SwingFlow v0.1.2
 
-**Support the developer:** ☕ [Buy me a Coffee](https://buymeacoffee.com/savowood)
+## Overview
 
----
+These improved versions of SwingFlow address the visual clutter and usability issues present in the default settings. The scripts now provide clean, actionable swing levels right out of the box.
 
-## 📦 WHAT IS SWINGFLOW?
+## Key Improvements
 
-SwingFlow is a professional-grade algorithmic trading strategy that combines institutional-level techniques with retail trader accessibility. It identifies high-probability pullback entries using VWAP, EMA stacks, and momentum confirmation.
+### 1. **Better Default Settings**
+- **Swing Length increased to 25** (from ~9-14): Shows only significant swing points
+- **Touch Sensitivity set to 0.5**: Balanced between strict and lenient
+- **Minimum 2 touches required**: Filters noise, shows confirmed levels
+- **Maximum 5 levels displayed**: Prevents chart clutter
+- **Background coloring OFF by default**: Keeps chart clean and readable
 
-**Version 0.1.1** adds Fair Value Gap detection and VWAP Standard Deviation bands for enhanced trading context.
+### 2. **Enhanced Visualization**
+- **Simplified color scheme**: Green (support) and Red (resistance) only
+- **Line styles indicate strength**: Solid lines = 3+ touches, Dashed = 2 touches
+- **Cleaner labels**: Show touch count only, not overwhelming information
+- **Automatic level cleanup**: Old/broken levels removed automatically
 
----
+### 3. **Smarter Level Management**
+- **Swing strength filtering**: Only displays swings that have proven significance
+- **Automatic prioritization**: Shows most-touched levels when too many exist
+- **Breakout detection**: Removes levels after clear price breakthrough
+- **Inactivity removal**: Cleans up levels not touched recently (50 bars default)
 
-## 🎯 QUICK START
+## Installation
 
-### Choose Your Platform:
+### TradingView (Pine Script)
 
-**TradingView (Pine Script):**
-- Full automated backtesting
-- Strategy optimization tools
-- Multi-market support
-- → See [swingflow_v0.1.pine](swingflow_v0.1.pine)
+1. Open TradingView and navigate to the Pine Editor
+2. Click "New" to create a new indicator
+3. Copy the entire contents of `swingflow_tradingview_improved.pine`
+4. Paste into the Pine Editor
+5. Click "Save" and give it a name (e.g., "SwingFlow v0.1.2")
+6. Click "Add to Chart"
 
-**Thinkorswim (ThinkScript):**
-- Direct trade execution
-- Professional charting
-- Free platform
-- → See [swingflow_v0.1.1.thinkscript](swingflow_v0.1.1.thinkscript)
+### Thinkorswim (ThinkScript)
 
----
-
-## 🆕 WHAT'S NEW IN v0.1.1
-
-### 1. Fair Value Gap Detection ✨
-- **Bullish FVG** (Green): Upward price gaps - potential support zones
-- **Bearish FVG** (Red): Downward price gaps - potential resistance zones
-- Automatic alerts when gaps form
-- Customizable gap size threshold
-
-### 2. VWAP Standard Deviation Bands ✨
-- **1σ Bands**: Normal volatility range (light gray)
-- **2σ Bands**: Extreme zones (dark gray)
-- Visual cloud shading
-- Fully customizable multipliers
-
-### 3. Fixed Label Display ✅
-- Entry, Stop, and Target prices now display correctly
-- Green bubble appears at entry signals
-- Clear price information at a glance
-
-**See [CHANGELOG.md](CHANGELOG.md) for complete details**
-
----
-
-## 📁 DOCUMENTATION
-
-**Getting Started:**
-- [QUICK_START_GUIDE.md](QUICK_START_GUIDE.md) - Install and start trading in 5 minutes
-- [SWINGFLOW_README.md](SWINGFLOW_README.md) - Complete user manual
-
-**Platform Guides:**
-- [THINKORSWIM_GUIDE.md](THINKORSWIM_GUIDE.md) - Thinkorswim installation and usage
-- [PLATFORM_COMPARISON.md](PLATFORM_COMPARISON.md) - Choose the right platform
-
-**Advanced:**
-- [ADVANCED_CUSTOMIZATION.md](ADVANCED_CUSTOMIZATION.md) - Expert modifications
-- [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) - Improve your win rate
-
-**Reference:**
-- [INDEX.md](INDEX.md) - Master file navigation
-- [CHANGELOG.md](CHANGELOG.md) - Version history
-- [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) - Package overview
-
----
-
-## ⚡ 5-MINUTE SETUP
-
-### For Thinkorswim:
 1. Open Thinkorswim
-2. Studies → Edit Studies → Create
-3. Copy `swingflow_v0.1.1.thinkscript`
-4. Paste and save
-5. Add to chart
+2. Go to Charts > Studies > Edit Studies
+3. Click "Create" at the bottom
+4. Copy the entire contents of `swingflow_thinkorswim_improved.txt`
+5. Paste into the thinkScript editor
+6. Click "OK" and give it a name (e.g., "SwingFlow v0.1.2")
+7. The study will automatically be added to your chart
 
-### For TradingView:
-1. Open TradingView Pine Editor
-2. Copy `swingflow_v0.1.pine`
-3. Save and add to chart
-4. Start backtesting
+## Usage Guide
 
----
+### Default Settings Explained
 
-## 🎨 STRATEGY OVERVIEW
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| Swing Detection Length | 25 | Higher = fewer, major swings only |
+| Minimum Swing Strength | 0.3 | Filters weak swing points |
+| Touch Sensitivity | 0.5 | Balanced touch detection |
+| Minimum Touches | 2 | Shows confirmed levels only |
+| Maximum Swing Levels | 5 | Limits chart clutter |
+| Show Background | OFF | Keeps chart clean |
 
-### Core Components:
+### Visual Indicators
 
-**Trend Identification:**
-- 9/20/180 EMA Stack
-- Price must be above EMAs in bullish order
+**Line Colors:**
+- 🟢 **Green** = Support level (swing low)
+- 🔴 **Red** = Resistance level (swing high)
 
-**Pullback Detection:**
-- VWAP touch/cross/range
-- Recent high pullback
-- VWAP Standard Deviation bands (NEW in v0.1.1)
+**Line Styles:**
+- **Solid line** = Strong level (3+ touches)
+- **Dashed line** = Developing level (2 touches)
+- **Thicker lines** = More touches = Stronger level
 
-**Entry Confirmation:**
-- MACD bullish momentum
-- Strong volume (1.5x average)
-- Bullish price action pattern
+**Labels:**
+- Show number of touches (e.g., "3 touches")
+- Yellow highlight (TOS) = Price currently near level
 
-**Context Analysis (NEW in v0.1.1):**
-- Fair Value Gap zones
-- VWAP volatility bands
-- Support/resistance identification
+### Customization Tips
 
-**Risk Management:**
-- ATR-based stops (2.0x default)
-- 3:1 Risk:Reward default
-- Optional trailing stops
-
----
-
-## 📊 VISUAL GUIDE
-
-**Chart Elements:**
+**For Day Trading (More Levels):**
 ```
-Blue Line      = 9 EMA (fast trend)
-Orange Line    = 20 EMA (medium trend)
-Red Line       = 180 EMA (long-term trend)
-Magenta Line   = VWAP (institutional level)
-Light Gray     = VWAP ±1σ bands (NEW)
-Dark Gray      = VWAP ±2σ bands (NEW)
-Green Shading  = Bullish Fair Value Gap (NEW)
-Red Shading    = Bearish Fair Value Gap (NEW)
-Green Arrow    = BUY SIGNAL
-Green Bubble   = Entry/Stop/Target prices (NEW)
+Swing Detection Length: 15-20
+Maximum Swing Levels: 7-8
+Minimum Touches: 2
 ```
 
----
-
-## 💡 EXAMPLE TRADE
-
-**Setup:**
-1. Price above 9 > 20 > 180 EMA stack ✓
-2. Price pulls back to VWAP lower 1σ band ✓
-3. Bullish FVG present at $104.50 (support) ✓
-4. Green arrow appears at $105.00 ✓
-5. Bubble shows: Entry $105.00, Stop $103.00, Target $111.00 ✓
-
-**Execution:**
-- Enter long at $105.00
-- Stop below FVG at $103.00 (2% risk)
-- Target at $111.00 (3:1 reward)
-- Result: 6% gain with clear risk management
-
----
-
-## 🎯 BEST SETTINGS BY MARKET
-
-### 📈 Stocks (Day Trading)
-- Style: Intraday
-- Timeframe: 5-minute
-- Volume: 2.0x average
-- Stop: ATR 2.0x
-
-### 💰 Crypto
-- Style: Swing
-- Timeframe: 1H-4H
-- Volume: 1.5x average
-- Stop: ATR 2.5x
-
-### 💱 Forex
-- Style: Swing
-- Timeframe: 1H-4H
-- Volume: 1.2x average
-- Stop: ATR 2.0x
-
-### 📊 Futures
-- Style: Intraday
-- Timeframe: 15min-1H
-- Volume: 1.5x average
-- Stop: ATR 2.0x
-
----
-
-## 📚 EDUCATIONAL RESOURCES
-
-**Learn Pullback Trading:**
-- [Ross Cameron (Warrior Trading)](https://www.youtube.com/@DaytradeWarrior) - VWAP strategies
-- [Joovier](https://www.youtube.com/@Joovier) - Institutional trading
-
-**Learn Fair Value Gaps:**
-- ICT (Inner Circle Trader) - FVG methodology
-- SMC (Smart Money Concepts) - Gap trading
-
-**Platform Learning:**
-- TradingView Pine Script docs
-- Thinkorswim Learning Center
-
----
-
-## ⚠️ RISK DISCLAIMER
-
-Trading involves substantial risk of loss. This software is provided for educational purposes only.
-
-**Important:**
-- Past performance ≠ future results
-- Never risk more than you can afford to lose
-- Always use proper risk management
-- Paper trade before going live
-- Consider consulting a financial advisor
-
----
-
-## 🆘 SUPPORT
-
-**Documentation Issues?**
-- Check INDEX.md for navigation
-- Review QUICK_START_GUIDE.md
-- Read platform-specific guides
-
-**Platform Issues?**
-- TradingView: Check Pine Script docs
-- Thinkorswim: TD Ameritrade support 1-800-672-2098
-
-**Feature Requests?**
-- See CHANGELOG.md for planned features
-- Submit suggestions (coming soon)
-
----
-
-## 🎉 QUICK WINS
-
-**Week 1:**
-- ✅ Install SwingFlow
-- ✅ Read QUICK_START_GUIDE.md
-- ✅ Watch it on demo/paper trading
-- ✅ Understand each indicator
-
-**Week 2-4:**
-- ✅ Paper trade 20+ setups
-- ✅ Journal every trade
-- ✅ Study winning setups
-- ✅ Adjust settings for your market
-
-**Month 2+:**
-- ✅ Start with small live positions
-- ✅ Risk only 1% per trade
-- ✅ Build confidence
-- ✅ Scale up gradually
-
----
-
-## 📦 PACKAGE CONTENTS
-
+**For Swing Trading (Fewer, Stronger Levels):**
 ```
-SwingFlow v0.1.1/
-├── swingflow_v0.1.1.thinkscript    # Thinkorswim version (NEW)
-├── swingflow_v0.1.pine             # TradingView version
-├── README.md                        # This file
-├── CHANGELOG.md                     # Version history (NEW)
-├── SWINGFLOW_README.md             # Complete manual
-├── QUICK_START_GUIDE.md            # Fast setup
-├── THINKORSWIM_GUIDE.md            # TOS-specific guide
-├── PLATFORM_COMPARISON.md          # Platform selection
-├── ADVANCED_CUSTOMIZATION.md       # Expert modifications
-├── OPTIMIZATION_GUIDE.md           # Performance tuning
-├── PROJECT_SUMMARY.md              # Package overview
-└── INDEX.md                        # File navigation
+Swing Detection Length: 30-40
+Maximum Swing Levels: 3-4
+Minimum Touches: 3-4
 ```
 
+**For Volatile Assets (Crypto, Small Caps):**
+```
+Touch Sensitivity: 0.7-1.0
+Swing Detection Length: 20-25
+```
+
+**For Low Volatility Assets (Blue Chips, Bonds):**
+```
+Touch Sensitivity: 0.3-0.4
+Swing Detection Length: 25-30
+```
+
+## Best Practices
+
+### 1. **Start with Defaults**
+- Don't adjust settings immediately
+- Let the indicator run for at least 20-30 bars
+- Evaluate if levels make sense for your timeframe
+
+### 2. **Timeframe Recommendations**
+- **5-minute charts**: Best for scalping, use lower swing length (15-20)
+- **15-minute to 1-hour**: Optimal for default settings
+- **Daily charts**: Increase swing length to 30-40 for major levels
+
+### 3. **Trading Strategies**
+
+**Support/Resistance Bounces:**
+1. Wait for price to touch a level (2+ touches minimum)
+2. Look for reversal candlestick patterns
+3. Confirm with volume increase
+4. Enter on next bar with stop below/above level
+
+**Breakout Trading:**
+1. Identify strong level (3+ touches, solid line)
+2. Wait for decisive break with high volume
+3. Enter on retest of broken level
+4. Stop loss on opposite side of level
+
+**Range Trading:**
+1. Identify clear support and resistance
+2. Trade between levels when range-bound
+3. Exit positions near opposing level
+4. Watch for breakout signals
+
+### 4. **Combining with Other Indicators**
+
+**Volume:**
+- High volume at level = Stronger significance
+- Volume increase on breakout = Confirms move
+
+**RSI/MACD:**
+- Divergence at swing level = Higher probability reversal
+- Momentum confirmation improves success rate
+
+**Moving Averages:**
+- Swing levels near major MAs = Added significance
+- Use MAs for trend context
+
+## Troubleshooting
+
+### Issue: No levels showing up
+**Solution:** 
+- Reduce "Minimum Touches" to 1
+- Lower "Minimum Swing Strength" to 0.2
+- Decrease "Swing Detection Length" to 15-20
+
+### Issue: Too many levels displayed
+**Solution:**
+- Reduce "Maximum Swing Levels" to 3
+- Increase "Minimum Touches" to 3-4
+- Increase "Swing Detection Length" to 30-35
+
+### Issue: Levels appear in wrong places
+**Solution:**
+- Adjust "Touch Sensitivity" (try 0.3 for strict, 0.7 for lenient)
+- Ensure adequate bar history loaded (100+ bars minimum)
+- Check timeframe is appropriate for settings
+
+### Issue: Levels don't update
+**Solution:**
+- Refresh chart (TradingView: F5, TOS: Restart)
+- Verify "Show Inactive Swings" is OFF for auto-cleanup
+- Check "Bars Before Removing Swing" isn't too high
+
+## Advanced Features
+
+### Custom Alerts (TradingView)
+
+The script includes built-in alert conditions:
+1. Right-click chart > Add Alert
+2. Select "SwingFlow v0.1.2"
+3. Choose "SwingFlow Level Touch"
+4. Set your notification preferences
+
+### Background Coloring (Optional)
+
+To enable subtle background zones:
+1. Turn ON "Show Background Color"
+2. Adjust "Background Transparency" to 95-98%
+3. Green zone = Near support
+4. Red zone = Near resistance
+
+### Additional Levels (Thinkorswim)
+
+The TOS script includes code for additional levels:
+- Already enabled for levels 3-4
+- Adjust "maxSwingLevels" parameter to show more
+- Note: Too many levels can slow TOS performance
+
+## Performance Notes
+
+### TradingView
+- Uses ~200-300 lines maximum
+- Efficient on all timeframes
+- No performance issues on standard charts
+
+### Thinkorswim
+- Optimized for TOS limitations
+- Use 4 levels or fewer for best performance
+- May lag slightly on tick charts with high volume
+
+## Changelog
+
+### v0.1.2 (Current)
+- Fixed array bounds error (Index out of bounds bug)
+- Added comprehensive safety checks for all array access
+- Added bounds validation in touch detection loop
+- Added array size checks in visualization section
+- Added safety checks in background coloring and alerts
+- Improved error handling throughout the script
+- Increased default swing length from ~10 to 25
+- Added minimum swing strength filter (0.3)
+- Implemented maximum levels cap (5 default)
+- Changed touch sensitivity from ~0.3 to 0.5
+- Disabled background coloring by default
+- Added automatic level cleanup
+- Improved sorting algorithm
+- Simplified color scheme to green/red only
+- Enhanced label readability
+- Added line style variation based on touch count
+- Optimized performance
+
+### v0.1.1 (Previous)
+- Initial improved version
+- Basic swing detection enhancements
+- Added level filtering
+
+### v0.1.0 (Original)
+- Basic swing detection
+- Multiple ATR periods
+- Full rainbow color scheme
+- No level filtering
+- No automatic cleanup
+
+## Support and Feedback
+
+For issues, suggestions, or questions:
+- Check the troubleshooting section first
+- Review TradingView/TOS documentation for platform-specific issues
+- Test different timeframes and settings combinations
+
+## License
+
+These scripts are provided as-is for personal trading use. Modify and adapt as needed for your trading strategy.
+
 ---
 
-## 📊 VERSION INFO
-
-**Current Version:** 0.1.1  
-**Release Date:** November 17, 2025  
-**Platform Support:** TradingView (Pine), Thinkorswim (ThinkScript)  
-**Status:** Stable - Production Ready
-
-**Changes from v0.1:**
-- Added Fair Value Gap detection
-- Added VWAP Standard Deviation bands
-- Fixed label display in ThinkScript
-- Enhanced documentation
-
----
-
-## 💪 THE SWINGFLOW PHILOSOPHY
-
-**Three Principles:**
-
-1. **Swing (Dance)** - Read the market's rhythm like a Lindy Hop dancer
-2. **Swing (Trading)** - Capture multi-day momentum moves
-3. **Swing Back** - Enter on pullbacks to key levels
-
-**The Goal:**
-Give retail traders institutional-level tools with clear, actionable signals.
-
----
-
-## 🚀 READY TO START?
-
-1. **Choose your platform** → TradingView or Thinkorswim
-2. **Read the quick start** → QUICK_START_GUIDE.md (5 min)
-3. **Install the strategy** → Copy/paste the code (5 min)
-4. **Paper trade** → Practice for 2-4 weeks
-5. **Go live** → Start small and scale up
-
-**You've got this! Let's swing with the flow! 🕺📈**
-
----
-
-**Support the developer:** ☕ [Buy me a Coffee](https://buymeacoffee.com/savowood)
-
-**Swing with the Flow!** 🕺📈
+**Important Disclaimer:** These indicators are for educational and informational purposes only. Always use proper risk management and never trade with money you cannot afford to lose. Past performance of support/resistance levels does not guarantee future results.
