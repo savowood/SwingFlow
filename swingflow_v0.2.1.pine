@@ -1,6 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © SwingFlow v0.2.1
 // If you find this useful, buy me a coffee:  https://www.buymeacoffee.com/savowood
+// Keep up-to-date on the latest version at https://github.com/savowood/SwingFlow
 //@version=6
 indicator("SwingFlow v0.2.1", shorttitle="SF v0.2.1", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
 
