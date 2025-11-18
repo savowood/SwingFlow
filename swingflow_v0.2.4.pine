@@ -1,0 +1,554 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © SwingFlow v0.2.4
+// If you find this useful, buy me a coffee: https://www.buymeacoffee.com/savowood
+// Keep up-to-date on the latest version at https://github.com/savowood/SwingFlow
+//@version=6
+indicator("SwingFlow v0.2.4", shorttitle="SF v0.2.4", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+// CHANGELOG v0.2.4
+// ═══════════════════════════════════════════════════════════════
+// CRITICAL FIXES:
+// - Fixed VWAP calculation to match TradingView's session-based VWAP
+// - Added bullish/bearish divergence detection (catches USD/JPY 9:00-10:00 moves)
+// - Zero-line histogram crosses now bypass strength requirement
+// - Configurable volume threshold (default 0.8x for more flexibility)
+//
+// NEW FEATURES:
+// - Proper session-based VWAP with volume-weighted accumulation
+// - Divergence play detection (price vs histogram direction mismatch)
+// - Enhanced histogram crossing logic
+// - Volume multiplier setting for fine-tuning
+
+// ═══════════════════════════════════════════════════════════════
+// SETTINGS PANEL
+// ═══════════════════════════════════════════════════════════════
+
+// VWAP Settings (Enhanced)
+vwapSource = input.string("HLC3", "VWAP Source", 
+    options=["Close", "HLC3", "OHLC4", "HL2"],
+    tooltip="HLC3 = (High + Low + Close) / 3 - Most common standard",
+    group="VWAP Settings")
+vwapStdev1 = input.float(2.0, "VWAP StdDev 1", minval=0.5, maxval=5.0, step=0.5, group="VWAP Settings")
+vwapStdev2 = input.float(3.0, "VWAP StdDev 2", minval=0.5, maxval=5.0, step=0.5, group="VWAP Settings")
+
+// Trading Style Selection
+tradingStyle = input.string("Intraday", "Trading Style", options=["Scalping", "Intraday", "Swing", "Medium Term", "Long Term"], group="Trading Style")
+
+// Trade Direction
+showLongs = input.bool(true, "Show Long Signals", group="Trade Direction")
+showShorts = input.bool(true, "Show Short Signals", group="Trade Direction")
+
+// Entry Filters (Enhanced)
+entryMode = input.string("Both", "Entry Mode", options=["Pullback Only", "Breakout Only", "Both"], 
+                         tooltip="Pullback: Price returns to VWAP\nBreakout: Crosses VWAP + Continuation + Divergence\nBoth: All setups", 
+                         group="Entry Filters")
+vwapProximity = input.float(2.0, "VWAP Proximity (%)", minval=0.5, maxval=10.0, step=0.5, group="Entry Filters")
+macdHistogramExpansion = input.bool(true, "MACD Histogram Expansion", group="Entry Filters")
+volumeConfirmation = input.bool(true, "Volume Confirmation", group="Entry Filters")
+volumeMultiplier = input.float(0.8, "Volume Multiplier", minval=0.5, maxval=2.0, step=0.1,
+                               tooltip="Volume threshold: 0.8 = 80% of average, 1.0 = 100%, 1.5 = 150%",
+                               group="Entry Filters")
+trendFilter = input.bool(false, "Trend Filter (Adaptive EMA)", group="Entry Filters")
+fvgFilter = input.bool(false, "FVG Support/Resistance", group="Entry Filters")
+histogramJumpDetection = input.bool(true, "Histogram Jump Detection", group="Entry Filters")
+histogramJumpThreshold = input.float(15.0, "Histogram Jump Threshold (%)", minval=5.0, maxval=100.0, step=5.0, group="Entry Filters")
+histogramStrengthThreshold = input.float(0.5, "Histogram Strength Threshold", minval=0.1, maxval=2.0, step=0.1,
+    tooltip="Strength filter for normal signals. Bypassed for zero-line crosses and divergences.",
+    group="Entry Filters")
+enableDivergence = input.bool(true, "Enable Divergence Detection",
+    tooltip="Catches moves where price direction differs from histogram (like USD/JPY 9:00-10:00)",
+    group="Entry Filters")
+
+// Risk Management
+rrRatio = input.float(3.0, "Risk:Reward Ratio", minval=1.0, maxval=10.0, step=0.5, group="Risk Management")
+stopLossMethod = input.string("Percentage", "Stop Loss Method", options=["Percentage", "Swing", "ATR", "VWAP"], group="Risk Management")
+stopLossPct = input.float(2.0, "Stop Loss %", minval=0.1, maxval=20.0, step=0.1, group="Risk Management")
+atrMultiplier = input.float(1.5, "ATR Multiplier (for ATR method)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+
+// Visual Options
+showEntryArrows = input.bool(true, "Show Entry Arrows", group="Visual Options")
+showStopLoss = input.bool(true, "Show Stop Loss Lines", group="Visual Options")
+showTakeProfit = input.bool(true, "Show Take Profit Lines", group="Visual Options")
+showFVG = input.bool(true, "Show Fair Value Gaps", group="Visual Options")
+showVWAPBands = input.bool(true, "Show VWAP Bands", group="Visual Options")
+show50EMA = input.bool(false, "Show Trend EMA", group="Visual Options")
+showRRLabel = input.bool(true, "Label Risk:Reward on Chart", group="Visual Options")
+showEntryType = input.bool(true, "Show Entry Type", group="Visual Options")
+
+// Alerts
+alertLongEntry = input.bool(true, "Long Entry Signal", group="Alerts")
+alertShortEntry = input.bool(true, "Short Entry Signal", group="Alerts")
+
+// ═══════════════════════════════════════════════════════════════
+// ADAPTIVE PARAMETERS BASED ON TRADING STYLE
+// ═══════════════════════════════════════════════════════════════
+
+var int macdFast = 12
+var int macdSlow = 26
+var int macdSignal = 9
+var int volumeLength = 20
+var float defaultStopPct = 2.0
+var int trendContextPeriod = 20
+
+if tradingStyle == "Scalping"
+    macdFast := 8
+    macdSlow := 17
+    macdSignal := 9
+    volumeLength := 10
+    defaultStopPct := 0.75
+    trendContextPeriod := 20
+else if tradingStyle == "Intraday"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 20
+    defaultStopPct := 2.0
+    trendContextPeriod := 20
+else if tradingStyle == "Swing"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 30
+    defaultStopPct := 3.0
+    trendContextPeriod := 50
+else if tradingStyle == "Medium Term"
+    macdFast := 19
+    macdSlow := 39
+    macdSignal := 9
+    volumeLength := 50
+    defaultStopPct := 6.0
+    trendContextPeriod := 50
+else if tradingStyle == "Long Term"
+    macdFast := 12
+    macdSlow := 26
+    macdSignal := 9
+    volumeLength := 20
+    defaultStopPct := 12.0
+    trendContextPeriod := 50
+
+// ═══════════════════════════════════════════════════════════════
+// INDICATOR CALCULATIONS
+// ═══════════════════════════════════════════════════════════════
+
+// VWAP Source Calculation
+vwapSourceValue = vwapSource == "HLC3" ? hlc3 : 
+                  vwapSource == "OHLC4" ? ohlc4 : 
+                  vwapSource == "HL2" ? hl2 : close
+
+// Session-Based VWAP (Matches TradingView's built-in)
+var float sessionVol = 0.0
+var float sessionVolPrice = 0.0
+
+// Detect new session (day change)
+newSession = ta.change(time("D")) != 0
+
+// Reset on new session
+if newSession
+    sessionVol := 0.0
+    sessionVolPrice := 0.0
+
+// Accumulate volume and volume-weighted price
+sessionVol += volume
+sessionVolPrice += vwapSourceValue * volume
+
+// Calculate VWAP
+vwapValue = sessionVolPrice / sessionVol
+
+// Calculate standard deviation for bands
+vwapStdDevCalc = ta.stdev(close, 20)
+vwapUpper1 = vwapValue + (vwapStdDevCalc * vwapStdev1)
+vwapLower1 = vwapValue - (vwapStdDevCalc * vwapStdev1)
+vwapUpper2 = vwapValue + (vwapStdDevCalc * vwapStdev2)
+vwapLower2 = vwapValue - (vwapStdDevCalc * vwapStdev2)
+
+// MACD
+[macdLine, signalLine, histogram] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// Volume
+volumeMA = ta.sma(volume, volumeLength)
+volumeSurge = volume > (volumeMA * volumeMultiplier)
+
+// Trend Context EMA
+trendEMA = ta.ema(close, trendContextPeriod)
+uptrend = close > trendEMA and trendEMA > trendEMA[5]
+downtrend = close < trendEMA and trendEMA < trendEMA[5]
+
+// ATR (for stop loss)
+atr = ta.atr(14)
+
+// ═══════════════════════════════════════════════════════════════
+// MACD HISTOGRAM ANALYSIS (Enhanced v0.2.4)
+// ═══════════════════════════════════════════════════════════════
+
+// Detect histogram expansion
+histogramExpanding = histogram > histogram[1] and histogram > 0
+histogramContractingDown = histogram < histogram[1] and histogram < 0
+
+// Histogram strength measurement
+histogramStrength = math.abs(histogram) / ta.stdev(histogram, 20)
+strongHistogram = histogramStrength > histogramStrengthThreshold
+
+// Momentum shift detection (red to green, green to red)
+histogramTurningPositive = histogram > 0 and histogram[1] <= 0 and histogram > histogram[1]
+histogramTurningNegative = histogram < 0 and histogram[1] >= 0 and histogram < histogram[1]
+
+// Zero-line crossing detection (ALWAYS strong signal)
+crossingZeroUp = histogram > 0 and histogram[1] <= 0
+crossingZeroDown = histogram < 0 and histogram[1] >= 0
+
+// Histogram jump detection
+histogramDeclining = histogram[1] < histogram[2] and histogram[2] < histogram[3]
+histogramJump = histogramDeclining and (histogram > histogram[1] * (1 + histogramJumpThreshold / 100)) and histogram > 0
+
+histogramDecliningBearish = histogram[1] > histogram[2] and histogram[2] > histogram[3]
+histogramJumpBearish = histogramDecliningBearish and (histogram < histogram[1] * (1 - histogramJumpThreshold / 100)) and histogram < 0
+
+// DIVERGENCE DETECTION (New in v0.2.4)
+// Bullish Divergence: Price rising, histogram rising but still negative
+bullishDivergence = enableDivergence and (
+    histogram < 0 and  // Still negative
+    histogram > histogram[1] and histogram[1] > histogram[2] and  // But rising for 2+ bars
+    close > close[1] and  // Price also rising
+    volumeSurge  // Volume confirming
+)
+
+// Bearish Divergence: Price falling, histogram falling but still positive
+bearishDivergence = enableDivergence and (
+    histogram > 0 and  // Still positive
+    histogram < histogram[1] and histogram[1] < histogram[2] and  // But falling for 2+ bars
+    close < close[1] and  // Price also falling
+    volumeSurge  // Volume confirming
+)
+
+// ═══════════════════════════════════════════════════════════════
+// FAIR VALUE GAPS (FVG) DETECTION
+// ═══════════════════════════════════════════════════════════════
+
+bullishFVG = low > high[2] and (low - high[2]) / close > 0.005
+bullishFVGtop = low
+bullishFVGbottom = high[2]
+
+bearishFVG = high < low[2] and (low[2] - high) / close > 0.005
+bearishFVGtop = low[2]
+bearishFVGbottom = high
+
+var box[] bullishFVGboxes = array.new<box>()
+var box[] bearishFVGboxes = array.new<box>()
+
+if bullishFVG and showFVG
+    fvgBox = box.new(bar_index - 2, bullishFVGtop, bar_index + 20, bullishFVGbottom, 
+                      border_color=color.new(color.green, 80), bgcolor=color.new(color.green, 90), border_width=1)
+    array.push(bullishFVGboxes, fvgBox)
+
+if bearishFVG and showFVG
+    fvgBox = box.new(bar_index - 2, bearishFVGtop, bar_index + 20, bearishFVGbottom, 
+                      border_color=color.new(color.red, 80), bgcolor=color.new(color.red, 90), border_width=1)
+    array.push(bearishFVGboxes, fvgBox)
+
+if array.size(bullishFVGboxes) > 0
+    for i = array.size(bullishFVGboxes) - 1 to 0
+        fvgBox = array.get(bullishFVGboxes, i)
+        fvgBottom = box.get_bottom(fvgBox)
+        if low <= fvgBottom
+            box.delete(fvgBox)
+            array.remove(bullishFVGboxes, i)
+
+if array.size(bearishFVGboxes) > 0
+    for i = array.size(bearishFVGboxes) - 1 to 0
+        fvgBox = array.get(bearishFVGboxes, i)
+        fvgTop = box.get_top(fvgBox)
+        if high >= fvgTop
+            box.delete(fvgBox)
+            array.remove(bearishFVGboxes, i)
+
+if array.size(bullishFVGboxes) > 0
+    for i = 0 to array.size(bullishFVGboxes) - 1
+        box.set_right(array.get(bullishFVGboxes, i), bar_index + 5)
+
+if array.size(bearishFVGboxes) > 0
+    for i = 0 to array.size(bearishFVGboxes) - 1
+        box.set_right(array.get(bearishFVGboxes, i), bar_index + 5)
+
+// ═══════════════════════════════════════════════════════════════
+// ENHANCED ENTRY SIGNAL LOGIC - v0.2.4
+// ═══════════════════════════════════════════════════════════════
+
+vwapCrossUp = ta.crossover(close, vwapValue)
+vwapCrossDown = ta.crossunder(close, vwapValue)
+
+distanceFromVWAP = math.abs(close - vwapValue) / vwapValue * 100
+nearVWAP = distanceFromVWAP <= vwapProximity
+
+priceBouncingUp = close > close[1] and close[1] > close[2]
+priceBouncingDown = close < close[1] and close[1] < close[2]
+strongMomentumUp = close > close[1] and close > open
+strongMomentumDown = close < close[1] and close < open
+
+nearLowerBand = close <= vwapLower1 and close >= vwapLower2
+nearUpperBand = close >= vwapUpper1 and close <= vwapUpper2
+
+pullbackLongSetup = (nearVWAP or nearLowerBand) and close <= vwapValue and (priceBouncingUp or strongMomentumUp)
+pullbackShortSetup = (nearVWAP or nearUpperBand) and close >= vwapValue and (priceBouncingDown or strongMomentumDown)
+
+trendContinuationLong = (close > vwapValue and close < vwapUpper2 and strongMomentumUp and 
+                         (histogramExpanding or histogramJump) and volumeSurge and strongHistogram)
+
+trendContinuationShort = (close < vwapValue and close > vwapLower2 and strongMomentumDown and 
+                          (histogramContractingDown or histogramJumpBearish) and volumeSurge and strongHistogram)
+
+breakoutLongSetup = (vwapCrossUp or 
+                     (close > vwapValue and close[1] <= vwapValue and strongMomentumUp) or
+                     (histogramTurningPositive and volumeSurge and strongHistogram) or
+                     trendContinuationLong or
+                     bullishDivergence)  // NEW: Divergence play
+
+breakoutShortSetup = (vwapCrossDown or 
+                      (close < vwapValue and close[1] >= vwapValue and strongMomentumDown) or
+                      (histogramTurningNegative and volumeSurge and strongHistogram) or
+                      trendContinuationShort or
+                      bearishDivergence)  // NEW: Divergence play
+
+var bool isBreakoutEntry = false
+var bool isPullbackEntry = false
+
+longVWAPCondition = false
+shortVWAPCondition = false
+
+if entryMode == "Pullback Only"
+    longVWAPCondition := pullbackLongSetup
+    shortVWAPCondition := pullbackShortSetup
+    isPullbackEntry := true
+    isBreakoutEntry := false
+else if entryMode == "Breakout Only"
+    longVWAPCondition := breakoutLongSetup
+    shortVWAPCondition := breakoutShortSetup
+    isBreakoutEntry := true
+    isPullbackEntry := false
+else  // "Both"
+    longVWAPCondition := pullbackLongSetup or breakoutLongSetup
+    shortVWAPCondition := pullbackShortSetup or breakoutShortSetup
+    isPullbackEntry := pullbackLongSetup or pullbackShortSetup
+    isBreakoutEntry := breakoutLongSetup or breakoutShortSetup
+
+longCondition = longVWAPCondition
+shortCondition = shortVWAPCondition
+
+// MACD Histogram Filter (Enhanced with divergence and zero-cross bypass)
+if macdHistogramExpansion
+    macdDivergenceOpening = math.abs(macdLine - signalLine) > math.abs(macdLine[1] - signalLine[1])
+    
+    // Longs: Normal histogram check OR zero-cross OR divergence
+    longCondition := longCondition and (
+        (histogram > 0 and ((histogramExpanding or histogramJump or histogramTurningPositive or macdDivergenceOpening) and strongHistogram)) or
+        (crossingZeroUp and volumeSurge) or  // Zero-line cross bypasses strength
+        bullishDivergence  // Divergence bypasses positive histogram requirement
+    )
+    
+    // Shorts: Normal histogram check OR zero-cross OR divergence
+    shortCondition := shortCondition and (
+        (histogram < 0 and ((histogramContractingDown or histogramJumpBearish or histogramTurningNegative or macdDivergenceOpening) and (strongHistogram or downtrend))) or
+        (crossingZeroDown and volumeSurge) or  // Zero-line cross bypasses strength
+        bearishDivergence  // Divergence bypasses negative histogram requirement
+    )
+else
+    longCondition := longCondition and histogram > 0
+    shortCondition := shortCondition and histogram < 0
+
+// Volume Filter
+if volumeConfirmation
+    longCondition := longCondition and volumeSurge
+    shortCondition := shortCondition and volumeSurge
+
+// Trend Filter
+if trendFilter
+    longCondition := longCondition and close > trendEMA
+    shortCondition := shortCondition and close < trendEMA
+
+// FVG Filter
+if fvgFilter
+    hasBullishFVGSupport = false
+    hasBearishFVGResistance = false
+    
+    if array.size(bullishFVGboxes) > 0
+        for i = 0 to array.size(bullishFVGboxes) - 1
+            fvgTop = box.get_top(array.get(bullishFVGboxes, i))
+            if fvgTop < close
+                hasBullishFVGSupport := true
+                break
+    
+    if array.size(bearishFVGboxes) > 0
+        for i = 0 to array.size(bearishFVGboxes) - 1
+            fvgBottom = box.get_bottom(array.get(bearishFVGboxes, i))
+            if fvgBottom > close
+                hasBearishFVGResistance := true
+                break
+    
+    longCondition := longCondition and hasBullishFVGSupport
+    shortCondition := shortCondition and hasBearishFVGResistance
+
+// Additional MACD confirmation (bypass for divergence)
+longCondition := longCondition and (macdLine > signalLine or bullishDivergence)
+shortCondition := shortCondition and (macdLine < signalLine or bearishDivergence)
+
+// Final signals
+longSignal = longCondition and showLongs
+shortSignal = shortCondition and showShorts
+
+// Determine entry type for current signal
+currentEntryType = ""
+if longSignal
+    if pullbackLongSetup
+        currentEntryType := "Pullback"
+    else if bullishDivergence
+        currentEntryType := "Divergence"
+    else if breakoutLongSetup
+        currentEntryType := "Breakout"
+else if shortSignal
+    if pullbackShortSetup
+        currentEntryType := "Pullback"
+    else if bearishDivergence
+        currentEntryType := "Divergence"
+    else if breakoutShortSetup
+        currentEntryType := "Breakout"
+
+// ═══════════════════════════════════════════════════════════════
+// STOP LOSS AND TAKE PROFIT CALCULATION
+// ═══════════════════════════════════════════════════════════════
+
+var float longEntryPrice = na
+var float longStopLoss = na
+var float longTP1 = na
+var float longTP2 = na
+
+var float shortEntryPrice = na
+var float shortStopLoss = na
+var float shortTP1 = na
+var float shortTP2 = na
+
+swingLow = ta.lowest(low, 10)
+swingHigh = ta.highest(high, 10)
+
+if longSignal
+    longEntryPrice := close
+    if stopLossMethod == "Percentage"
+        longStopLoss := longEntryPrice * (1 - stopLossPct / 100)
+    else if stopLossMethod == "Swing"
+        longStopLoss := swingLow
+    else if stopLossMethod == "ATR"
+        longStopLoss := longEntryPrice - (atr * atrMultiplier)
+    else if stopLossMethod == "VWAP"
+        longStopLoss := vwapLower1
+    riskAmount = longEntryPrice - longStopLoss
+    longTP1 := longEntryPrice + (riskAmount * rrRatio * 0.5)
+    longTP2 := longEntryPrice + (riskAmount * rrRatio)
+
+if shortSignal
+    shortEntryPrice := close
+    if stopLossMethod == "Percentage"
+        shortStopLoss := shortEntryPrice * (1 + stopLossPct / 100)
+    else if stopLossMethod == "Swing"
+        shortStopLoss := swingHigh
+    else if stopLossMethod == "ATR"
+        shortStopLoss := shortEntryPrice + (atr * atrMultiplier)
+    else if stopLossMethod == "VWAP"
+        shortStopLoss := vwapUpper1
+    riskAmount = shortStopLoss - shortEntryPrice
+    shortTP1 := shortEntryPrice - (riskAmount * rrRatio * 0.5)
+    shortTP2 := shortEntryPrice - (riskAmount * rrRatio)
+
+// ═══════════════════════════════════════════════════════════════
+// VISUAL PLOTS (Yellow VWAP Theme)
+// ═══════════════════════════════════════════════════════════════
+
+plot(showVWAPBands ? vwapValue : na, "VWAP", color=color.new(color.yellow, 0), linewidth=2)
+plot(showVWAPBands ? vwapUpper1 : na, "VWAP +2σ", color=color.new(color.yellow, 50), linewidth=1)
+plot(showVWAPBands ? vwapLower1 : na, "VWAP -2σ", color=color.new(color.yellow, 50), linewidth=1)
+plot(showVWAPBands ? vwapUpper2 : na, "VWAP +3σ", color=color.new(color.yellow, 65), linewidth=1, style=plot.style_cross)
+plot(showVWAPBands ? vwapLower2 : na, "VWAP -3σ", color=color.new(color.yellow, 65), linewidth=1, style=plot.style_cross)
+
+plot(show50EMA ? trendEMA : na, "Trend EMA", color=color.new(color.orange, 0), linewidth=2)
+
+// Entry arrow colors (add orange for divergence)
+arrowColorLong = currentEntryType == "Pullback" ? color.new(color.green, 0) : 
+                 currentEntryType == "Divergence" ? color.new(color.orange, 0) :
+                 color.new(color.lime, 0)
+arrowColorShort = currentEntryType == "Pullback" ? color.new(color.red, 0) : 
+                  currentEntryType == "Divergence" ? color.new(color.orange, 0) :
+                  color.new(color.fuchsia, 0)
+
+plotshape(showEntryArrows and longSignal, "Long Entry", shape.triangleup, location.belowbar, 
+          color=arrowColorLong, size=size.small)
+plotshape(showEntryArrows and shortSignal, "Short Entry", shape.triangledown, location.abovebar, 
+          color=arrowColorShort, size=size.small)
+
+if showRRLabel and longSignal
+    riskPct = (longEntryPrice - longStopLoss) / longEntryPrice * 100
+    tp1Pct = (longTP1 - longEntryPrice) / longEntryPrice * 100
+    tp2Pct = (longTP2 - longEntryPrice) / longEntryPrice * 100
+    entryTypeLabel = showEntryType ? "\n📍 " + currentEntryType : ""
+    labelText = "📈 LONG $" + str.tostring(longEntryPrice, "#.##") + entryTypeLabel + "\n" +
+                 "🛡️ SL: $" + str.tostring(longStopLoss, "#.##") + " (-" + str.tostring(riskPct, "#.#") + "%)\n" +
+                 "🎯 TP1: $" + str.tostring(longTP1, "#.##") + " (+" + str.tostring(tp1Pct, "#.#") + "%)\n" +
+                 "🎯 TP2: $" + str.tostring(longTP2, "#.##") + " (+" + str.tostring(tp2Pct, "#.#") + "%)"
+    label.new(bar_index, low, labelText, style=label.style_label_up, color=arrowColorLong, textcolor=color.white, size=size.small)
+
+if showRRLabel and shortSignal
+    riskPct = (shortStopLoss - shortEntryPrice) / shortEntryPrice * 100
+    tp1Pct = (shortEntryPrice - shortTP1) / shortEntryPrice * 100
+    tp2Pct = (shortEntryPrice - shortTP2) / shortEntryPrice * 100
+    entryTypeLabel = showEntryType ? "\n📍 " + currentEntryType : ""
+    labelText = "📉 SHORT $" + str.tostring(shortEntryPrice, "#.##") + entryTypeLabel + "\n" +
+                 "🛡️ SL: $" + str.tostring(shortStopLoss, "#.##") + " (+" + str.tostring(riskPct, "#.#") + "%)\n" +
+                 "🎯 TP1: $" + str.tostring(shortTP1, "#.##") + " (-" + str.tostring(tp1Pct, "#.#") + "%)\n" +
+                 "🎯 TP2: $" + str.tostring(shortTP2, "#.##") + " (-" + str.tostring(tp2Pct, "#.#") + "%)"
+    label.new(bar_index, high, labelText, style=label.style_label_down, color=arrowColorShort, textcolor=color.white, size=size.small)
+
+var line longSLLine = na
+var line shortSLLine = na
+
+if showStopLoss and longSignal
+    if not na(longSLLine)
+        line.delete(longSLLine)
+    longSLLine := line.new(bar_index, longStopLoss, bar_index + 20, longStopLoss, 
+                            color=color.new(color.blue, 0), width=2, style=line.style_dashed)
+
+if showStopLoss and shortSignal
+    if not na(shortSLLine)
+        line.delete(shortSLLine)
+    shortSLLine := line.new(bar_index, shortStopLoss, bar_index + 20, shortStopLoss, 
+                             color=color.new(color.blue, 0), width=2, style=line.style_dashed)
+
+var line longTP1Line = na
+var line longTP2Line = na
+var line shortTP1Line = na
+var line shortTP2Line = na
+
+if showTakeProfit and longSignal
+    if not na(longTP1Line)
+        line.delete(longTP1Line)
+    if not na(longTP2Line)
+        line.delete(longTP2Line)
+    longTP1Line := line.new(bar_index, longTP1, bar_index + 20, longTP1, color=color.new(color.yellow, 0), width=2)
+    longTP2Line := line.new(bar_index, longTP2, bar_index + 20, longTP2, color=color.new(color.orange, 0), width=2)
+
+if showTakeProfit and shortSignal
+    if not na(shortTP1Line)
+        line.delete(shortTP1Line)
+    if not na(shortTP2Line)
+        line.delete(shortTP2Line)
+    shortTP1Line := line.new(bar_index, shortTP1, bar_index + 20, shortTP1, color=color.new(color.yellow, 0), width=2)
+    shortTP2Line := line.new(bar_index, shortTP2, bar_index + 20, shortTP2, color=color.new(color.orange, 0), width=2)
+
+plotshape(histogramJumpDetection and histogramJump, "Histogram Jump (Bull)", 
+          shape.diamond, location.belowbar, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(histogramJumpDetection and histogramJumpBearish, "Histogram Jump (Bear)", 
+          shape.diamond, location.abovebar, color=color.new(color.fuchsia, 0), size=size.tiny)
+
+// ═══════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════
+
+alertcondition(alertLongEntry and longSignal, "Long Entry Signal", "SwingFlow v0.2.4: Long Entry Signal Detected!")
+alertcondition(alertShortEntry and shortSignal, "Short Entry Signal", "SwingFlow v0.2.4: Short Entry Signal Detected!")
+
