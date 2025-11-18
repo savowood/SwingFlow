@@ -1,0 +1,335 @@
+# SwingFlow v0.2.1 - ThinkScript Version
+# For ThinkorSwim Platform
+# © SwingFlow v0.2.1
+
+# ═══════════════════════════════════════════════════════════════
+# USER INPUTS
+# ═══════════════════════════════════════════════════════════════
+
+# VWAP Settings
+input vwapStdev1 = 2.0;
+input vwapStdev2 = 3.0;
+
+# Trading Style
+input tradingStyle = {default "Intraday", "Scalping", "Swing", "Medium Term", "Long Term"};
+
+# Entry Filters
+input vwapPullbackEntry = yes;
+input vwapCrossEntry = yes;
+input macdHistogramExpansion = yes;
+input volumeConfirmation = yes;
+input trendFilter = no;
+input histogramJumpDetection = yes;
+input histogramJumpThreshold = 15.0;
+
+# Risk Management
+input rrRatio = 3.0;
+input stopLossMethod = {default "Percentage", "Swing", "ATR"};
+input stopLossPct = 2.0;
+input atrMultiplier = 1.5;
+
+# Visual Options
+input showEntryArrows = yes;
+input showStopLoss = yes;
+input showTakeProfit = yes;
+input showVWAPBands = yes;
+input show50EMA = no;
+input showLabels = yes;
+
+# ═══════════════════════════════════════════════════════════════
+# ADAPTIVE PARAMETERS BASED ON TRADING STYLE
+# ═══════════════════════════════════════════════════════════════
+
+def macdFast;
+def macdSlow;
+def macdSignal;
+def volumeLength;
+def defaultStopPct;
+
+switch (tradingStyle) {
+case "Scalping":
+    macdFast = 8;
+    macdSlow = 17;
+    macdSignal = 9;
+    volumeLength = 10;
+    defaultStopPct = 0.75;
+case "Swing":
+    macdFast = 12;
+    macdSlow = 26;
+    macdSignal = 9;
+    volumeLength = 30;
+    defaultStopPct = 3.0;
+case "Medium Term":
+    macdFast = 19;
+    macdSlow = 39;
+    macdSignal = 9;
+    volumeLength = 50;
+    defaultStopPct = 6.0;
+case "Long Term":
+    macdFast = 12;
+    macdSlow = 26;
+    macdSignal = 9;
+    volumeLength = 20;
+    defaultStopPct = 12.0;
+default: # Intraday
+    macdFast = 12;
+    macdSlow = 26;
+    macdSignal = 9;
+    volumeLength = 20;
+    defaultStopPct = 2.0;
+}
+
+# ═══════════════════════════════════════════════════════════════
+# INDICATOR CALCULATIONS
+# ═══════════════════════════════════════════════════════════════
+
+# VWAP and Bands
+def vwapValue = reference VWAP("time frame" = "DAY");
+def vwapStdDev = StDev(close, 20);
+def vwapUpper1 = vwapValue + (vwapStdDev * vwapStdev1);
+def vwapLower1 = vwapValue - (vwapStdDev * vwapStdev1);
+def vwapUpper2 = vwapValue + (vwapStdDev * vwapStdev2);
+def vwapLower2 = vwapValue - (vwapStdDev * vwapStdev2);
+
+# MACD
+def macdVal = ExpAverage(close, macdFast) - ExpAverage(close, macdSlow);
+def macdSignalLine = ExpAverage(macdVal, macdSignal);
+def macdHistogram = macdVal - macdSignalLine;
+
+# Volume
+def volumeMA = Average(volume, volumeLength);
+def volumeSurge = volume > volumeMA;
+
+# 50 EMA
+def ema50 = ExpAverage(close, 50);
+
+# ATR
+def atr = WildersAverage(TrueRange(high, close, low), 14);
+
+# ═══════════════════════════════════════════════════════════════
+# MACD HISTOGRAM ANALYSIS
+# ═══════════════════════════════════════════════════════════════
+
+def histogramExpanding = macdHistogram > macdHistogram[1] and macdHistogram > 0;
+def histogramContractingDown = macdHistogram < macdHistogram[1] and macdHistogram < 0;
+
+# Histogram Jump Detection
+def histogramDeclining = macdHistogram[1] < macdHistogram[2] and macdHistogram[2] < macdHistogram[3];
+def histogramJump = histogramDeclining and (macdHistogram > macdHistogram[1] * (1 + histogramJumpThreshold / 100)) and macdHistogram > 0;
+
+def histogramDecliningBearish = macdHistogram[1] > macdHistogram[2] and macdHistogram[2] > macdHistogram[3];
+def histogramJumpBearish = histogramDecliningBearish and (macdHistogram < macdHistogram[1] * (1 - histogramJumpThreshold / 100)) and macdHistogram < 0;
+
+# ═══════════════════════════════════════════════════════════════
+# ENTRY SIGNAL LOGIC
+# ═══════════════════════════════════════════════════════════════
+
+# VWAP Cross Detection
+def vwapCrossUp = close crosses above vwapValue;
+def vwapCrossDown = close crosses below vwapValue;
+
+# VWAP Pullback Detection
+def nearLowerBand = close <= vwapLower1 and close >= vwapLower2;
+def nearUpperBand = close >= vwapUpper1 and close <= vwapUpper2;
+
+def priceBouncingUp = close > close[1] and close[1] > close[2];
+def priceBouncingDown = close < close[1] and close[1] < close[2];
+
+def vwapPullbackLong = nearLowerBand and close < vwapValue and priceBouncingUp;
+def vwapPullbackShort = nearUpperBand and close > vwapValue and priceBouncingDown;
+
+# Build entry conditions
+def longCondition;
+def shortCondition;
+
+# VWAP Filter
+if (vwapPullbackEntry and !vwapCrossEntry) {
+    longCondition = vwapPullbackLong;
+    shortCondition = vwapPullbackShort;
+} else if (vwapCrossEntry and !vwapPullbackEntry) {
+    longCondition = vwapCrossUp;
+    shortCondition = vwapCrossDown;
+} else if (vwapPullbackEntry and vwapCrossEntry) {
+    longCondition = vwapPullbackLong or vwapCrossUp;
+    shortCondition = vwapPullbackShort or vwapCrossDown;
+} else {
+    longCondition = close < vwapValue;
+    shortCondition = close > vwapValue;
+}
+
+# MACD Histogram Filter
+def macdDivergenceOpening = AbsValue(macdVal - macdSignalLine) > AbsValue(macdVal[1] - macdSignalLine[1]);
+
+if (macdHistogramExpansion) {
+    longCondition = longCondition and macdHistogram > 0 and ((histogramExpanding or (histogramJumpDetection and histogramJump)) or macdDivergenceOpening);
+    shortCondition = shortCondition and macdHistogram < 0 and ((histogramContractingDown or (histogramJumpDetection and histogramJumpBearish)) or macdDivergenceOpening);
+} else {
+    longCondition = longCondition and macdHistogram > 0;
+    shortCondition = shortCondition and macdHistogram < 0;
+}
+
+# Volume Filter
+if (volumeConfirmation) {
+    longCondition = longCondition and volumeSurge;
+    shortCondition = shortCondition and volumeSurge;
+}
+
+# Trend Filter
+if (trendFilter) {
+    longCondition = longCondition and close > ema50;
+    shortCondition = shortCondition and close < ema50;
+}
+
+# MACD Line/Signal confirmation
+longCondition = longCondition and macdVal > macdSignalLine;
+shortCondition = shortCondition and macdVal < macdSignalLine;
+
+# Final signals
+def longSignal = longCondition;
+def shortSignal = shortCondition;
+
+# ═══════════════════════════════════════════════════════════════
+# STOP LOSS AND TAKE PROFIT CALCULATION
+# ═══════════════════════════════════════════════════════════════
+
+def swingLow = Lowest(low, 10);
+def swingHigh = Highest(high, 10);
+
+def longStopLoss;
+switch (stopLossMethod) {
+case "Swing":
+    longStopLoss = swingLow;
+case "ATR":
+    longStopLoss = close - (atr * atrMultiplier);
+default: # Percentage
+    longStopLoss = close * (1 - stopLossPct / 100);
+}
+
+def shortStopLoss;
+switch (stopLossMethod) {
+case "Swing":
+    shortStopLoss = swingHigh;
+case "ATR":
+    shortStopLoss = close + (atr * atrMultiplier);
+default: # Percentage
+    shortStopLoss = close * (1 + stopLossPct / 100);
+}
+
+def longRisk = close - longStopLoss;
+def longTP1 = close + (longRisk * rrRatio * 0.5);
+def longTP2 = close + (longRisk * rrRatio);
+
+def shortRisk = shortStopLoss - close;
+def shortTP1 = close - (shortRisk * rrRatio * 0.5);
+def shortTP2 = close - (shortRisk * rrRatio);
+
+# ═══════════════════════════════════════════════════════════════
+# PLOTS - VWAP AND BANDS
+# ═══════════════════════════════════════════════════════════════
+
+plot VWAPLine = if showVWAPBands then vwapValue else Double.NaN;
+VWAPLine.SetDefaultColor(Color.BLUE);
+VWAPLine.SetLineWeight(2);
+VWAPLine.SetStyle(Curve.FIRM);
+
+plot VWAPUpper1 = if showVWAPBands then vwapUpper1 else Double.NaN;
+VWAPUpper1.SetDefaultColor(Color.LIGHT_BLUE);
+VWAPUpper1.SetLineWeight(1);
+
+plot VWAPLower1 = if showVWAPBands then vwapLower1 else Double.NaN;
+VWAPLower1.SetDefaultColor(Color.LIGHT_BLUE);
+VWAPLower1.SetLineWeight(1);
+
+plot VWAPUpper2 = if showVWAPBands then vwapUpper2 else Double.NaN;
+VWAPUpper2.SetDefaultColor(Color.LIGHT_BLUE);
+VWAPUpper2.SetLineWeight(1);
+VWAPUpper2.SetStyle(Curve.POINTS);
+
+plot VWAPLower2 = if showVWAPBands then vwapLower2 else Double.NaN;
+VWAPLower2.SetDefaultColor(Color.LIGHT_BLUE);
+VWAPLower2.SetLineWeight(1);
+VWAPLower2.SetStyle(Curve.POINTS);
+
+# 50 EMA
+plot EMA50 = if show50EMA then ema50 else Double.NaN;
+EMA50.SetDefaultColor(Color.ORANGE);
+EMA50.SetLineWeight(2);
+
+# ═══════════════════════════════════════════════════════════════
+# PLOTS - ENTRY SIGNALS
+# ═══════════════════════════════════════════════════════════════
+
+plot LongEntry = if showEntryArrows and longSignal then low * 0.999 else Double.NaN;
+LongEntry.SetPaintingStrategy(PaintingStrategy.BOOLEAN_ARROW_UP);
+LongEntry.SetDefaultColor(Color.GREEN);
+LongEntry.SetLineWeight(3);
+
+plot ShortEntry = if showEntryArrows and shortSignal then high * 1.001 else Double.NaN;
+ShortEntry.SetPaintingStrategy(PaintingStrategy.BOOLEAN_ARROW_DOWN);
+ShortEntry.SetDefaultColor(Color.RED);
+ShortEntry.SetLineWeight(3);
+
+# Histogram Jump Markers
+plot HistJumpBull = if histogramJumpDetection and histogramJump then low * 0.998 else Double.NaN;
+HistJumpBull.SetPaintingStrategy(PaintingStrategy.BOOLEAN_POINTS);
+HistJumpBull.SetDefaultColor(Color.LIME);
+HistJumpBull.SetLineWeight(2);
+
+plot HistJumpBear = if histogramJumpDetection and histogramJumpBearish then high * 1.002 else Double.NaN;
+HistJumpBear.SetPaintingStrategy(PaintingStrategy.BOOLEAN_POINTS);
+HistJumpBear.SetDefaultColor(Color.MAGENTA);
+HistJumpBear.SetLineWeight(2);
+
+# ═══════════════════════════════════════════════════════════════
+# LABELS - ENTRY INFORMATION
+# ═══════════════════════════════════════════════════════════════
+
+AddLabel(showLabels and longSignal, 
+    "LONG: $" + AsText(close, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | SL: $" + AsText(longStopLoss, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | TP1: $" + AsText(longTP1, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | TP2: $" + AsText(longTP2, NumberFormat.TWO_DECIMAL_PLACES),
+    Color.GREEN);
+
+AddLabel(showLabels and shortSignal, 
+    "SHORT: $" + AsText(close, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | SL: $" + AsText(shortStopLoss, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | TP1: $" + AsText(shortTP1, NumberFormat.TWO_DECIMAL_PLACES) + 
+    " | TP2: $" + AsText(shortTP2, NumberFormat.TWO_DECIMAL_PLACES),
+    Color.RED);
+
+# Trading Style Label
+AddLabel(yes, "SwingFlow v0.2.1 | Style: " + tradingStyle, Color.BLUE);
+
+# ═══════════════════════════════════════════════════════════════
+# ALERTS
+# ═══════════════════════════════════════════════════════════════
+
+Alert(longSignal, "SwingFlow: LONG Signal!", Alert.BAR, Sound.Ring);
+Alert(shortSignal, "SwingFlow: SHORT Signal!", Alert.BAR, Sound.Ring);
+
+# ═══════════════════════════════════════════════════════════════
+# CLOUDS - VWAP BANDS
+# ═══════════════════════════════════════════════════════════════
+
+AddCloud(if showVWAPBands then vwapUpper1 else Double.NaN, vwapValue, Color.LIGHT_BLUE, Color.LIGHT_BLUE);
+AddCloud(vwapValue, if showVWAPBands then vwapLower1 else Double.NaN, Color.LIGHT_BLUE, Color.LIGHT_BLUE);
+
+# ═══════════════════════════════════════════════════════════════
+# NOTES
+# ═══════════════════════════════════════════════════════════════
+
+# ThinkScript Limitations:
+# - Cannot draw boxes (FVG boxes not included)
+# - Cannot draw lines dynamically (stop loss/TP lines shown via labels)
+# - Limited to ~10 custom plots per study
+# - No backtesting strategy mode (use TOS Strategy tab separately)
+#
+# To use Stop Loss and Take Profit levels:
+# - Check the labels at top of chart when signal fires
+# - Manually place orders at those levels
+# - Or add Chart Bubbles to visualize levels (optional)
+#
+# For MACD visualization:
+# - Add standard MACD indicator in lower panel
+# - Configure with your Trading Style parameters
